@@ -1,4 +1,8 @@
 # This Python file uses the following encoding: utf-8
+#pip install opencv-python
+#pip install PySide6
+# https://www.pythonguis.com/tutorials/pyside6-creating-your-first-window/
+# https://doc.qt.io/qtforpython/examples/
 import sys
 import os
 import cv2
@@ -9,11 +13,11 @@ import PySide6.QtCore as QtCore
 import PySide6.QtMultimedia as QtMultimedia
 import PySide6.QtGui as QtGui
 
-#vt互動介面定義
+#vt互動介面定義(介面功能設計)
 class vt(QtWidgets.QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.func_dict = {'錄影':self.video_recorder, '影片截圖':self.video_cut, '輸出成影片':self.output_video}
+        self.func_dict = {'錄影':self.video_recorder, '影片截圖或圖片合成影片':self.video_cut}
 
         # 定義主介面
         self.main_ui_layout = QtWidgets.QVBoxLayout()
@@ -28,11 +32,26 @@ class vt(QtWidgets.QMainWindow):
         self.record_widgets_args = self.ini_recorder_ui()
         self.main_ui_layout.addWidget(self.recorder_ui)
         
+        # 截圖介面定義
+        self.cut_widgets_args = self.ini_video_cut()
+        self.main_ui_layout.addWidget(self.video_cut_ui)
+        self.video_cut_ui.hide()
+
         self.main_ui = QtWidgets.QWidget()
         self.main_ui.setLayout(self.main_ui_layout)
         self.setCentralWidget(self.main_ui)
 
-    #初始化錄影功能介面
+    #顯示錄影功能介面
+    def video_recorder(self):
+        self.recorder_ui.show()
+        self.video_cut_ui.hide()
+
+    #顯示影片截圖成連續影像的介面
+    def video_cut(self):
+        self.recorder_ui.hide()
+        self.video_cut_ui.show()
+
+    # 初始化錄影功能介面(介面設計)
     def ini_recorder_ui(self):
         self.recorder_ui = QtWidgets.QGroupBox()
         recoder_layout = QtWidgets.QVBoxLayout()
@@ -76,7 +95,7 @@ class vt(QtWidgets.QMainWindow):
             qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
         )
         open_folder.triggered.connect(self.on_open_folder)
-        save_folder_edit.setText(os.path.join(QtCore.QDir.currentPath(), 'data', 'record'))
+        save_folder_edit.setText(os.path.join(os.getcwd(), 'data', 'record'))
         line4.addWidget(save_folder_edit)
         recoder_layout.addItem(line4)
         record_widgets_args['save_folder_edit'] = save_folder_edit
@@ -199,7 +218,7 @@ class vt(QtWidgets.QMainWindow):
             w.setText('')
             h.setText('')
     
-    #設定儲存路徑
+    # 設定儲存資料夾
     @QtCore.Slot()
     def on_open_folder(self):
         dir_path = QtWidgets.QFileDialog.getExistingDirectory(
@@ -264,19 +283,175 @@ class vt(QtWidgets.QMainWindow):
             return 0
         return 1
 
-    #顯示錄影功能介面
-    def video_recorder(self):
-        self.recorder_ui.show()
+    # 初始化影片截圖成連續影像的介面(介面設計)
+    def ini_video_cut(self):
+        self.video_cut_ui = QtWidgets.QGroupBox()
+        layout = QtWidgets.QVBoxLayout()
+        layout.setAlignment(QtCore.Qt.AlignTop)
+        cut_widgets_args = {}
+       
+        # 選擇轉換方式
+        line0 = QtWidgets.QHBoxLayout()
+        line0.setAlignment(QtCore.Qt.AlignLeft)
+        line0.addWidget(QtWidgets.QLabel('選擇轉換模式: '))
+        mode_combo = QtWidgets.QComboBox()
+        mode_combo.addItems(['影片截圖成連續影像', '連續影像轉影片'])
+        mode_combo.currentIndexChanged.connect(self.mode_switch)
+        line0.addWidget(mode_combo)
+        cut_widgets_args['mode_combo'] = mode_combo
+        layout.addItem(line0)
 
-    #顯示影片截圖成影像的介面
-    def video_cut(self):
-        self.recorder_ui.hide()
+        # 第一行 選擇影片 *.mp4
+        line1 = QtWidgets.QHBoxLayout()
+        line1.setAlignment(QtCore.Qt.AlignLeft)
+        line1.addWidget(QtWidgets.QLabel('開啟影片: '))
+        video_edit = QtWidgets.QLineEdit()
+        open_video = video_edit.addAction(
+            qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
+        )
+        open_video.triggered.connect(self.on_open_video)
+        line1.addWidget(video_edit)
+        cut_widgets_args['video_edit'] = video_edit
+        layout.addItem(line1)
 
-    #顯示將影像輸出成影片的介面
-    def output_video(self):
-        self.recorder_ui.hide()
+        # 選擇連續影像資料夾
+        line3 = QtWidgets.QHBoxLayout()
+        line3.setAlignment(QtCore.Qt.AlignLeft)
+        line3.addWidget(QtWidgets.QLabel('開啟連續影像資料夾: '))
+        images_edit = QtWidgets.QLineEdit()
+        open_images = images_edit.addAction(
+            qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
+        )
+        open_images.triggered.connect(self.on_open_images)
+        line3.addWidget(images_edit)
+        cut_widgets_args['images_edit'] = images_edit
+        layout.addItem(line3)
+        cut_widgets_args['images_edit'].hide()
 
+        # 輸入影像拍攝時間 預設目前時間
+        line5 = QtWidgets.QHBoxLayout()
+        line5.setAlignment(QtCore.Qt.AlignLeft)
+        line5.addWidget(QtWidgets.QLabel('輸入影像拍攝時間: '))
+        vedio_time_edit = QtWidgets.QDateTimeEdit(QtCore.QDateTime.currentDateTime(), self)
+        vedio_time_edit.setDisplayFormat('yyyy/MM/dd HH:mm:ss')
+        vedio_time_edit.setCalendarPopup(True)
+        line5.addWidget(vedio_time_edit)
+        cut_widgets_args['vedio_time_edit'] = vedio_time_edit
+        layout.addItem(line5)
 
+        # 輸入自訂fps
+        line9 = QtWidgets.QHBoxLayout()
+        fps_check_box = QtWidgets.QCheckBox('使用自訂fps 否則偵測影片/影像fps')
+        cut_widgets_args['fps_check_box'] = fps_check_box
+        line9.addWidget(fps_check_box)
+        fps_check_box.stateChanged.connect(self.input_fps)
+        layout.addItem(line9)
+        line9 = QtWidgets.QHBoxLayout()
+        line9.setAlignment(QtCore.Qt.AlignLeft)
+        line9.addWidget(QtWidgets.QLabel('輸入fps: '))
+        fps_edit = QtWidgets.QLineEdit()
+        fps_edit.setText('0')
+        fps_edit.setDisabled(True)
+        cut_widgets_args['fps_edit'] = fps_edit
+        line9.addWidget(fps_edit)
+        layout.addItem(line9)
+
+        # 選擇儲存資料夾
+        line2 = QtWidgets.QHBoxLayout()
+        line2.setAlignment(QtCore.Qt.AlignLeft)
+        line2.addWidget(QtWidgets.QLabel('選擇儲存資料夾: '))
+        save_floder_edit = QtWidgets.QLineEdit()
+        save_floder_edit.setText(os.path.join(os.getcwd(), 'data', 'record'))
+        open_cut_floder = save_floder_edit.addAction(
+            qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
+        )
+        open_cut_floder.triggered.connect(self.open_cut_save_folder)
+        line2.addWidget(save_floder_edit)
+        cut_widgets_args['save_folder_edit'] = save_floder_edit
+        layout.addItem(line2)
+
+        # 開始轉換按鈕
+        line4 = QtWidgets.QHBoxLayout()
+        line4.setAlignment(QtCore.Qt.AlignLeft)
+        start_convert_btn = QtWidgets.QPushButton(text='開始轉換')
+        start_convert_btn.clicked.connect(self.start_convert)
+        line4.addWidget(start_convert_btn)
+        line4.addWidget(QtWidgets.QLabel(' '))
+        layout.addItem(line4)
+
+        #佈局
+        self.video_cut_ui.setLayout(layout)
+        return cut_widgets_args
+
+    # 模式切換 '影片截圖成連續影像' <-> '連續影像轉影片'
+    @QtCore.Slot()
+    def mode_switch(self):
+        if(self.cut_widgets_args['mode_combo'].currentIndex() == 0):
+            self.cut_widgets_args['video_edit'].show()
+            self.cut_widgets_args['images_edit'].hide()
+        else:
+            self.cut_widgets_args['images_edit'].show()
+            self.cut_widgets_args['video_edit'].hide()
+
+    # 開啟影片格式檔案
+    @QtCore.Slot()
+    def on_open_video(self):
+        video_path = QtWidgets.QFileDialog.getOpenFileName(
+            parent=self,
+            caption='Select a mp4 file',
+            dir=os.getcwd(),
+            filter='(*.mp4)')
+        if video_path:
+            self.cut_widgets_args['video_edit'].setText(video_path[0])
+    
+    # 開啟連續影像的資料夾
+    @QtCore.Slot()
+    def on_open_images(self):
+        dir_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Open Directory", os.getcwd(), QtWidgets.QFileDialog.ShowDirsOnly)
+        if dir_path:
+            dest_dir = QtCore.QDir(dir_path)
+            self.cut_widgets_args['images_edit'].setText(
+                QtCore.QDir.fromNativeSeparators(dest_dir.path()))
+
+    # 設定連續影像儲存的資料夾
+    @QtCore.Slot()
+    def open_cut_save_folder(self):
+        dir_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Open Directory", os.getcwd(), QtWidgets.QFileDialog.ShowDirsOnly)
+        if dir_path:
+            dest_dir = QtCore.QDir(dir_path)
+            self.cut_widgets_args['save_folder_edit'].setText(
+                QtCore.QDir.fromNativeSeparators(dest_dir.path()))
+    
+    # 按下確認輸入fps 讓輸入fps的輸入框可以輸入東西
+    @QtCore.Slot()
+    def input_fps(self, state):
+        if state :
+            self.cut_widgets_args['fps_edit'].setDisabled(False)
+        else:
+            self.cut_widgets_args['fps_edit'].setDisabled(True)
+
+    # 開始轉換影像或影片
+    @QtCore.Slot()
+    def start_convert(self):
+        convert = VideoConvert()
+        save_path = self.cut_widgets_args['save_folder_edit'].text()
+        if not os.path.isdir(save_path):
+            os.makedirs(save_path)
+        fps =  int(self.cut_widgets_args['fps_edit'].text())
+
+        if(self.cut_widgets_args['mode_combo'].currentIndex() == 0):
+            file = self.cut_widgets_args['video_edit'].text()
+            video_time = self.cut_widgets_args['vedio_time_edit'].dateTime()
+            sec_time = float(video_time.toSecsSinceEpoch())
+            convert.convert_to_images(file, sec_time, save_path, fps)
+
+        else:
+            file = self.cut_widgets_args['images_edit'].text()
+            convert.convert_to_video(file, save_path, fps)
+
+# 相機功能類別
 class Camera(QtCore.QThread):
     update_frame = QtCore.Signal(QtGui.QImage)
 
@@ -298,7 +473,6 @@ class Camera(QtCore.QThread):
         # 設定存擋影像尺寸 fps 
         self.H, self.W = int(args['img_H_edit'].text()), int(args['img_W_edit'].text())
         self.fps = int(args['fps_edit'].text()) + 1
-        print(self.fps)
         if args['recorder_type_combo'].currentIndex() == 1:
             self.fps = 1 / self.fps
         
@@ -361,8 +535,6 @@ class Camera(QtCore.QThread):
         # 刪除資料夾
         shutil.rmtree(self.save_file_dir)
 
-
-
     def run(self):
         # 開啟相機
         self.cap = cv2.VideoCapture(self.camera_id)
@@ -408,10 +580,89 @@ class Camera(QtCore.QThread):
         if self.save_in_video == 0:
             self.write_to_video()
         print('finish')
-    
 
+#影像轉換功能定義
+class VideoConvert():
+    def __init__(self) -> None:
+        # 設定時間 當作輸出檔案的檔名
+        twlocaltime = time.localtime(time.time())
+        localtime = time.asctime(twlocaltime)
+        self.dirname = '{}-{}-{}-{}'.format( #日-時-分-秒
+            localtime[8:10],
+            localtime[11:13],
+            localtime[14:16],
+            localtime[17:19])
 
+    # 影片轉換成影像
+    def convert_to_images(self, file_path:str, sec_time:float, output_path:str, fps:int):
+        # 讀取影片
+        video = cv2.VideoCapture(file_path)
+        if fps == 0:
+            # 使用者沒有定義fps => 取得影片的fps
+            fps = video.get(cv2.CAP_PROP_FPS)
+            print('video fps = ', fps)
+
+        # 以時間當作輸出檔案資料夾的檔名
+        os.makedirs(os.path.join(output_path, self.dirname))
+
+        # 計算時間
+        while video.isOpened():
+            ret, frame = video.read()
+            if not ret:
+                break
+            filename = f'{sec_time}.jpg'
+            cv2.imwrite(os.path.join(output_path, self.dirname, filename), frame)
+            sec_time += 1/fps
+
+        video.release()
     
+    # 影像轉換成影片
+    def convert_to_video(self, folder_path:str, output_path:str, fps:int):
+        if fps == 0:
+            # 使用者沒有定義fps需要自行計算fps
+            try:
+                # 取得所有錄影影像路徑 按時間大小排序
+                files = sorted(os.listdir(folder_path), key = lambda id:float(id[:-4]))
+                # 計算平均 fps 
+                time_list = [int(float(ftime[:-4])) for ftime in files]
+                x_time_list = [] # 不重複列表，要用來計算每個秒數有多少張影像
+                for e in time_list:
+                    if e not in x_time_list:
+                        x_time_list.append(e)
+                #計算每個秒數有多少張影像
+                count_list = [time_list.count(e) for e in x_time_list]
+                #計算平均每秒有多少影像就是等遺下影片要設定的播放FPS
+                avg_fps = sum(count_list) / len(count_list)
+            except Exception:
+                # 無法以時間排序影像 就不排序
+                files = sorted(os.listdir(folder_path))
+                avg_fps = 1
+        else:
+            # 使用使用者定義的fps
+            avg_fps = fps
+            try:
+                # 取得所有錄影影像路徑 按時間大小排序
+                files = sorted(os.listdir(folder_path), key = lambda id:float(id[:-4]))
+            except Exception:
+                # 無法以時間排序影像 
+                files = sorted(os.listdir(folder_path))
+
+        # 取得影像大小
+        img = cv2.imread(os.path.join(folder_path, files[0]))
+        (h, w, _) = img.shape
+        
+        # 寫入影片
+        fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+        videoname = os.path.join(output_path, f'{self.dirname}.mp4')
+        out = cv2.VideoWriter(videoname, fourcc, avg_fps, (w, h))
+        for filename in files:
+            #讀取每個影像
+            frame = cv2.imread(os.path.join(folder_path, filename), cv2.IMREAD_COLOR)
+            if frame.shape[0] != h and frame.shape[1] != w:
+                frame = cv2.resize(frame, (w, h))
+            #寫入影像
+            out.write(frame)
+        out.release()
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
