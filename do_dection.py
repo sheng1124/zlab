@@ -546,10 +546,10 @@ class ExeThread(QtCore.QThread):
     def run(self):
         # 加載模型、設定
         if self.model_id == 0:
-            from yolov7main import YoloV7API
+            from detection.yolov7main import YoloV7API
             detector = YoloV7API(self.weights, self.device)
         elif self.model_id == 1:
-            from yolov7pose import YoloV7API
+            from detection.yolov7pose import YoloV7API
             detector = YoloV7API(self.weights, self.device)
 
         # 後製器

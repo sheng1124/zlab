@@ -2,7 +2,7 @@ import sys
 import torch
 import numpy as np
 
-sys.path.extend(['../yolov7_main'])
+sys.path.extend(['./detection/yolov7_main'])
 from models.experimental import attempt_load
 from utils.datasets import letterbox
 from utils.general import non_max_suppression
