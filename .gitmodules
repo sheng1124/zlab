@@ -1,3 +1,0 @@
-[submodule "detection/yolov7_pose"]
-	path = detection/yolov7_pose
-	url = https://github.com/WongKinYiu/yolov7
