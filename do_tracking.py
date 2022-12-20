@@ -142,22 +142,60 @@ class Painter():
             cv2.line(im, pos1, pos2, (int(r), int(g), int(b)), thickness=tl)#
 
 #介面定義(介面功能設計)
-class DetectionUI(QtWidgets.QMainWindow):
+class TrackingUI(QtWidgets.QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
 
         # 定義主介面
-        self.main_ui_layout = QtWidgets.QVBoxLayout()
+        self.main_ui_layout = QtWidgets.QHBoxLayout()
         self.main_ui_layout.setAlignment(QtCore.Qt.AlignTop)
 
-        # 錄影介面定義
+        # 參數設定介面定義
         self.detection_ui = self._ini_detection_ui()
         self.main_ui_layout.addWidget(self.detection_ui)
         
+        # 顯示結果介面定義
+        self.show_ui = self._show_ui()
+        self.main_ui_layout.addWidget(self.show_ui)
+
         # layout
         self.main_ui = QtWidgets.QWidget()
         self.main_ui.setLayout(self.main_ui_layout)
         self.setCentralWidget(self.main_ui)
+    
+    def _show_ui(self):
+        show_ui = QtWidgets.QGroupBox()
+        layout = QtWidgets.QVBoxLayout()
+        layout.setAlignment(QtCore.Qt.AlignTop)
+
+        # 顯示視窗
+        line = QtWidgets.QHBoxLayout()
+        result_window = QtWidgets.QLabel(self)
+        result_window.setFixedSize(640, 480)
+        line.addWidget(result_window)
+        layout.addItem(line)
+        self.result_window = result_window
+
+        # 表格視窗
+        line = QtWidgets.QHBoxLayout()
+        table = QtWidgets.QTableWidget()
+        #table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        table.verticalHeader().setDefaultAlignment(QtCore.Qt.AlignCenter)
+        table.verticalHeader().setDefaultSectionSize(128)
+        
+        table.setRowCount(1)
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(['人物編號', '出現時間', '最後出現時間', '人物特徵'])
+        table.verticalScrollBar().setVisible(True)
+        table.horizontalScrollBar().setVisible(False)
+        line.addWidget(table)
+        layout.addItem(line)
+
+        #佈局
+        show_ui.setLayout(layout)
+        self.history_table = table
+        return show_ui
     
     # 初始化偵測介面(介面設計)
     def _ini_detection_ui(self):
@@ -198,10 +236,49 @@ class DetectionUI(QtWidgets.QMainWindow):
         layout.addItem(line)
         self.track_combo = track_combo
 
+        # 設定追蹤過濾參數
+        track_cfg_box = QtWidgets.QGroupBox()
+        layout2 = QtWidgets.QVBoxLayout()
+        layout2.setAlignment(QtCore.Qt.AlignTop)
+
+        line = QtWidgets.QHBoxLayout()
+        line.addWidget(QtWidgets.QLabel('設定追蹤條件: '))
+        layout2.addItem(line)
+        line = QtWidgets.QHBoxLayout()
+        line.addWidget(QtWidgets.QLabel('設定追蹤物件的類別 id (您需要去參考您的模型可以偵測的類別對應的數字):'))
+        layout2.addItem(line)
+        line = QtWidgets.QHBoxLayout()
+        track_class_id_edit = QtWidgets.QLineEdit('0')
+        line.addWidget(track_class_id_edit)
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        line.addWidget(QtWidgets.QLabel('設定偵測物件時的信心分數門檻(信心大於此數的值才追蹤): '))
+        conf_label = QtWidgets.QLabel()
+        line.addWidget(conf_label)
+        layout2.addItem(line)
+        line = QtWidgets.QHBoxLayout()
+        
+        conf_thre_slider = QtWidgets.QSlider(orientation=QtCore.Qt.Horizontal)
+        conf_thre_slider.setRange(0, 100)
+        conf_thre_slider.setValue(60)
+        def show():
+            conf_label.setText(str(conf_thre_slider.value()/100))
+        conf_thre_slider.valueChanged.connect(show)
+        conf_label.setText(str(conf_thre_slider.value()/100))
+        line.addWidget(conf_thre_slider)
+        layout2.addItem(line)
+
+        track_cfg_box.setLayout(layout2)
+        layout.addWidget(track_cfg_box)
+        self.track_class_id_edit = track_class_id_edit
+        self.conf_thre_slider = conf_thre_slider
+
         # 選擇輸入方式
         line = QtWidgets.QHBoxLayout()
         line.setAlignment(QtCore.Qt.AlignLeft)
-        line.addWidget(QtWidgets.QLabel('選擇輸入影像模式:'))
+        line.addWidget(QtWidgets.QLabel('選擇輸入影像模式: '))
         input_mode_combo = QtWidgets.QComboBox()
         input_mode_combo.addItems(['圖片集(所有圖片尺寸必須一樣)', '影片', '視訊鏡頭、usb相機、網路攝影機'])
         input_mode_combo.currentIndexChanged.connect(self.input_switch)
@@ -294,29 +371,30 @@ class DetectionUI(QtWidgets.QMainWindow):
  
         # 開始辨識按鈕
         line = QtWidgets.QHBoxLayout()
-        start_detection_btn = QtWidgets.QPushButton(text='開始辨識')
+        start_detection_btn = QtWidgets.QPushButton(text='開始辨識＆追蹤')
         start_detection_btn.clicked.connect(self.start_detection)
         start_detection_btn.setEnabled(True)
         line.addWidget(start_detection_btn)
         layout.addItem(line)
         self.start_detection_btn = start_detection_btn
 
+        # 暫停辨識按鈕
+        line = QtWidgets.QHBoxLayout()
+        halt_detection_btn = QtWidgets.QPushButton(text='暫停辨識＆追蹤')
+        halt_detection_btn.clicked.connect(self.halt_detection)
+        halt_detection_btn.setEnabled(False)
+        line.addWidget(halt_detection_btn)
+        layout.addItem(line)
+        self.halt_detection_btn = halt_detection_btn
+
         # 停止辨識按鈕
         line = QtWidgets.QHBoxLayout()
-        stop_detection_btn = QtWidgets.QPushButton(text='停止辨識')
+        stop_detection_btn = QtWidgets.QPushButton(text='停止辨識＆追蹤')
         stop_detection_btn.clicked.connect(self.stop_detection)
         stop_detection_btn.setEnabled(False)
         line.addWidget(stop_detection_btn)
         layout.addItem(line)
         self.stop_detection_btn = stop_detection_btn
-
-        # 顯示視窗
-        line = QtWidgets.QHBoxLayout()
-        result_window = QtWidgets.QLabel(self)
-        result_window.setFixedSize(640, 480)
-        line.addWidget(result_window)
-        layout.addItem(line)
-        self.result_window = result_window
 
         #佈局
         detection_ui.setLayout(layout)
@@ -340,6 +418,13 @@ class DetectionUI(QtWidgets.QMainWindow):
         if not (input_folder_path or input_video_path or input_camera_id):
             print('error2')
         
+        try:
+            track_class_id = int(self.track_class_id_edit.text())
+        except Exception :
+            track_class_id = 0
+
+        conf_filter = self.conf_thre_slider.value() / 100
+
         cfg = {
             'model_id':model_id,
             'mode':mode, 
@@ -348,7 +433,9 @@ class DetectionUI(QtWidgets.QMainWindow):
             'input_video_path':input_video_path,
             'input_camera_id':input_camera_id,
             'is_save_raw':is_save_raw,
-            'window_size': self.result_window.size().toTuple()
+            'window_size': self.result_window.size().toTuple(),
+            'track_class_id':track_class_id,
+            'conf_filter':conf_filter
             }
         return cfg
 
@@ -405,25 +492,44 @@ class DetectionUI(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def start_detection(self):
+
         self.model_combo.setEnabled(False)
         # 整理使用者參數
         cfg = self.get_cfg()
         self.exe = ExeThread(cfg)
         self.exe.update_frame.connect(self.set_image)
+        self.exe.update_table.connect(self.set_table)
         self.exe.finished.connect(self.end_detection)
 
         self.start_detection_btn.setEnabled(False)
+        self.halt_detection_btn.setEnabled(True)
+        self.halt_detection_btn.setText('暫停辨識＆追蹤')
         self.stop_detection_btn.setEnabled(True)
+
+        # 重置顯示表格
+        self.history_table.clearContents()
+        if self.history_table.rowCount() > 1:
+            for _ in range(self.history_table.rowCount() - 1):
+                self.history_table.removeRow(0)
         self.exe.start()
     
+    def halt_detection(self):
+        if self.exe.control == 0:
+            self.exe.control = 1
+            self.halt_detection_btn.setText('繼續辨識＆追蹤')
+        elif self.exe.control == 1:
+            self.exe.control = 0
+            self.halt_detection_btn.setText('暫停辨識＆追蹤')
+
     @QtCore.Slot()
     def stop_detection(self):
-        self.exe.control = True
+        self.exe.control = 2
         time.sleep(1)
 
     @QtCore.Slot()
     def end_detection(self):
         self.start_detection_btn.setEnabled(True)
+        self.halt_detection_btn.setEnabled(False)
         self.stop_detection_btn.setEnabled(False)
         if self.input_mode_combo.currentIndex() == 0:
             return
@@ -433,18 +539,48 @@ class DetectionUI(QtWidgets.QMainWindow):
         scaled_img = img.scaled(w, h, QtCore.Qt.KeepAspectRatio)
         self.result_window.setPixmap(QtGui.QPixmap.fromImage(scaled_img))
 
-    # 將偵測後的影像顯示在UI上
+    # 將追蹤後的影像顯示在UI上
     @QtCore.Slot(QtGui.QImage)
     def set_image(self, image:QtGui.QImage):
         self.result_window.setPixmap(QtGui.QPixmap.fromImage(image))
+    
+    # 將追蹤後的資料顯示在表格上
+    @QtCore.Slot(dict)
+    def set_table(self, history:dict):
+        if len(history) < 1:
+            return
+        elif len(history) > self.history_table.rowCount():
+            for _ in range(len(history) - self.history_table.rowCount()):
+                self.history_table.insertRow(self.history_table.rowCount())
+        
+        keys = [e for e in history.keys()]
+
+        for i in range(self.history_table.rowCount()):
+            tid = keys[i]
+            stime = history[tid]['stime']
+            etime = history[tid]['etime']
+            feature = history[tid]['feature']
+            self.history_table.setItem(i, 0,QtWidgets.QTableWidgetItem(str(tid)))
+            self.history_table.setItem(i, 1,QtWidgets.QTableWidgetItem(f'{stime:.3f}'))
+            self.history_table.setItem(i, 2,QtWidgets.QTableWidgetItem(f'{etime:.3f}'))
+
+            color_frame = cv2.cvtColor(feature, cv2.COLOR_BGR2RGB)
+            h, w, ch = color_frame.shape
+            img = QtGui.QImage(color_frame.data, w, h, ch * w, QtGui.QImage.Format_RGB888)
+            scaled_img = img.scaled(128, 128, QtCore.Qt.KeepAspectRatio)
+            servantIcon = QtWidgets.QLabel("")
+            servantIcon.setPixmap(QtGui.QPixmap(scaled_img))
+            self.history_table.setCellWidget(i, 3, servantIcon)
             
 # 後台執行緒，後續流程(讀檔、偵測、後置、資料儲存)
 class ExeThread(QtCore.QThread):
     update_frame = QtCore.Signal(QtGui.QImage)
     finished = QtCore.Signal()
+    update_table = QtCore.Signal(dict)
 
     def __init__(self, cfg, parent=None) -> None:
         QtCore.QThread.__init__(self, parent)
+        self.cfg = cfg
         self.model_id = cfg['model_id']
         self.simg_w, self.simg_h = cfg['window_size']
         self.weights = cfg['weight_file_path']
@@ -457,8 +593,10 @@ class ExeThread(QtCore.QThread):
             self.input_camera_id = cfg['input_camera_id']
             self.is_save_raw = cfg['is_save_raw']
         self.mode = mode
+        self.track_class_id = cfg['track_class_id']
+        self.conf_filter = cfg['conf_filter']
         self.device = detect_device()
-        self.control = False
+        self.control = 0
 
     # 設定讀取影像的資料夾
     def set_fpath(self, fpath):
@@ -504,6 +642,9 @@ class ExeThread(QtCore.QThread):
         # Emit signal
         self.update_frame.emit(scaled_img)
 
+    def emit_table(self, history_table):
+        self.update_table.emit(history_table)
+
     # 執行緒
     def run(self):
         # 加載偵測模型、設定
@@ -518,8 +659,7 @@ class ExeThread(QtCore.QThread):
         painter = Painter()
 
         # 追蹤者管理
-        #tm = tracker.Tracker_manager()
-        tm = ztrack.TrackManager()
+        tm = ztrack.TrackManager(self.track_class_id, self.conf_filter)
 
         # 資料儲存
         self.set_output_data()
@@ -537,13 +677,16 @@ class ExeThread(QtCore.QThread):
             imgsource = ImageSource(camera=self.input_camera_id)
 
         for img0, filename in imgsource:
-            if self.control: # 強制停止
+            if self.control == 1:
+                while self.control == 1:
+                    pass
+            elif self.control == 2: # 強制停止
                 break
             # 影像偵測
             results = detector.detect(img0)
 
             # 物件追蹤
-            tracker_list = tm.tracking(float(filename[:-4]), results)
+            tracker_list = tm.tracking(float(filename[:-4]), img0, results)
 
             track_results = tm.get_track_result()
 
@@ -551,7 +694,7 @@ class ExeThread(QtCore.QThread):
 
             painter.plot_track(img0, track_results)
 
-            painter.plot_detection_box(img0, results, tm.trackclass)
+            painter.plot_detection_box(img0, results, tm.track_class_id)
 
             # 儲存後製影像
             cv2.imwrite(os.path.join(self.output_folder, filename), img0)
@@ -562,14 +705,16 @@ class ExeThread(QtCore.QThread):
             # 顯示後製影像
             self.emit_image(img0)
 
+            # 輸出表格資料
+            self.emit_table(tm.get_tracker_history())
+
         print('tracking finish')
         self.csvfile.close()
         self.finished.emit()
-        
     
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
-    widget = DetectionUI()
-    widget.resize(800, 600)
+    widget = TrackingUI()
+    widget.resize(1200, 800)
     widget.show()
     sys.exit(app.exec())

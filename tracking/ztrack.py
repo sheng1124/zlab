@@ -22,6 +22,9 @@ class Tracker():
         # 速度
         self.avg_v = 0
         self.avg_v_list = []
+        # 特徵圖
+        self.feature = None
+        self.feature_conf = 0.0
     
     # 取得最後紀錄的box座標
     def get_last_coord(self):
@@ -35,22 +38,40 @@ class Tracker():
     def get_last_time(self):
         return self.time_list[-1]
 
+    # 取得表格資料
+    def get_table_data(self):
+        id = self.id
+        starttime = self.time_list[0]
+        endtime = self.time_list[-1]
+        feature = self.feature
+        return(id, starttime, endtime, feature)
+
     #  紀錄框,足跡,速度 方向
-    def set_box(self, gtime:float, result:list):
+    def set_box(self, gtime:float, img:np.ndarray, result:list):
         self.frame_count = 0
         self.coord_list.append(result[:4])
         self.time_list.append(gtime)
         self.result_list.append(result)
+        conf = result[4]
+
+        if type(self.feature) == type(None):
+            self.feature = img[int(result[1]):int(result[3]) ,int(result[0]):int(result[2])].copy()
+            self.feature_conf = conf
+        elif conf > self.feature_conf: #conf > 0.8 :#and img.shape[0] * img.shape[1] > self.feature[0] * self.feature[1]:#
+            self.feature = img[int(result[1]):int(result[3]) ,int(result[0]):int(result[2])].copy()
+            self.feature_conf = conf
 
 class TrackManager():
-    def __init__(self, cfg=None) -> None:
-        self.trackclass = 0
+    def __init__(self, track_class_id = 0, conf_filter = 0.6) -> None:
+        self.track_class_id = track_class_id
+        self.conf_filter = conf_filter
         self.trackid = 0
         self.tracker_list = []
+        self.tracker_history = {}
         # 鎖定物件
 
     # 追蹤流程
-    def tracking(self, gtime, results):
+    def tracking(self, gtime, img,  results):
         # 取得新的辨識結果(results)，追蹤列表重置為未追蹤狀態
         untrack_list = self.tracker_list
         tracked_list = []
@@ -72,7 +93,7 @@ class TrackManager():
         iou_matrix = self.count_iou_mat(new_results, untrack_list)
 
         # 若偵測新的box沒有重疊 或 沒tracker -> 快速分配
-        tracked_list, unmatch_results, iou_matrix = self.fastmatch(gtime, new_results, iou_matrix)
+        tracked_list, unmatch_results, iou_matrix = self.fastmatch(gtime, img, new_results, iou_matrix)
 
         # 最佳化配對 
         if len(iou_matrix) > 0:
@@ -84,7 +105,7 @@ class TrackManager():
                 row_id, col_id = ans
                 result = unmatch_results[row_id]
                 tracker = untrack_list[col_id]
-                tracker.set_box(gtime, result)
+                tracker.set_box(gtime, img, result)
                 tracked_list.append(tracker)
 
             # 檢查有沒有box 沒有被追蹤到
@@ -92,7 +113,7 @@ class TrackManager():
                 if not n in matched_result_id_list:
                     # 有多的box沒被追蹤到(可能有與其他t 重疊但t有更適合的box)-> 建立新的 tracker
                     print(f'in {gtime} new tracker: {self.trackid}')
-                    tracked_list.append(self.new_tracker(gtime, unmatch_results[n]))
+                    tracked_list.append(self.new_tracker(gtime, img, unmatch_results[n]))
                     
             # 檢查有沒有多的 tracker 沒分配到 box
             for n in range(len(untrack_list)):
@@ -102,12 +123,13 @@ class TrackManager():
                         tracked_list.append(untrack_list[n])
                     else:
                         print(f'in {gtime} tracker {untrack_list[n].id} exit')
-            
+        
         self.tracker_list = tracked_list
+        self.set_tracker_to_history()
         return tracked_list
 
     # 對偵測結果做配對 分配對應的物件id
-    def fastmatch(self, gtime:float, results:list, iou_matrix:list):
+    def fastmatch(self, gtime:float, img:np.ndarray, results:list, iou_matrix:list):
         tracked_list = []
         unmatch_results = []
         new_iou_matrix = []
@@ -122,7 +144,7 @@ class TrackManager():
             else:
                 # 新偵測到的 box 沒有與 tracker 重疊，或是系統中沒有正在追蹤的 tracker -> 生成新的tracker
                 print(f'in {gtime} new tracker: {self.trackid}')
-                t = self.new_tracker(gtime, results[row_id])
+                t = self.new_tracker(gtime, img, results[row_id])
                 tracked_list.append(t)
     
         return tracked_list, unmatch_results, new_iou_matrix
@@ -162,6 +184,18 @@ class TrackManager():
             track_results.append(result)
         return track_results
 
+    def set_tracker_to_history(self):
+        for t in self.tracker_list:
+            (tid, stime, etime, feature) = t.get_table_data()
+            if tid not in self.tracker_history:
+                self.tracker_history[tid] = {}
+            self.tracker_history[tid]['stime'] = stime
+            self.tracker_history[tid]['etime'] = etime
+            self.tracker_history[tid]['feature'] = feature
+    
+    def get_tracker_history(self):
+        return self.tracker_history
+
     # 檢查 tracker 是否離開
     def is_tracker_exit(self, tracker:Tracker):
         # 檢查停留禎數 
@@ -174,9 +208,9 @@ class TrackManager():
             return True
     
     # 新增 tracker 
-    def new_tracker(self, gtime, result):
+    def new_tracker(self, gtime, img, result):
         tracker = Tracker(self.trackid)
-        tracker.set_box(gtime, result)
+        tracker.set_box(gtime, img, result)
         self.trackid += 1
         return tracker
 
@@ -185,7 +219,7 @@ class TrackManager():
         new_results = []
         for result in results:
             conf, cls = result[4], int(result[5])
-            if conf > 0.7 and cls == 0:
+            if conf > self.conf_filter and cls == self.track_class_id:
                 new_results.append(result.detach().numpy())
         return new_results
 
