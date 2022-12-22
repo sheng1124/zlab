@@ -185,8 +185,9 @@ class TrackingUI(QtWidgets.QMainWindow):
         table.verticalHeader().setDefaultSectionSize(128)
         
         table.setRowCount(1)
-        table.setColumnCount(4)
-        table.setHorizontalHeaderLabels(['人物編號', '出現時間', '最後出現時間', '人物特徵'])
+        table.setColumnCount(5)
+        table.hideColumn(4)
+        table.setHorizontalHeaderLabels(['人物編號', '出現時間', '最後出現時間', '人物特徵', '特徵長寬'])
         table.verticalScrollBar().setVisible(True)
         table.horizontalScrollBar().setVisible(False)
         line.addWidget(table)
@@ -217,7 +218,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         line = QtWidgets.QHBoxLayout()
         line.setAlignment(QtCore.Qt.AlignLeft)
         line.addWidget(QtWidgets.QLabel('開啟類神經網路權重檔: '))
-        weights_edit = QtWidgets.QLineEdit()
+        weights_edit = QtWidgets.QLineEdit('yolov7.pt')
         open_weights = weights_edit.addAction(
             qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
         )
@@ -281,6 +282,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         line.addWidget(QtWidgets.QLabel('選擇輸入影像模式: '))
         input_mode_combo = QtWidgets.QComboBox()
         input_mode_combo.addItems(['圖片集(所有圖片尺寸必須一樣)', '影片', '視訊鏡頭、usb相機、網路攝影機'])
+        input_mode_combo.setCurrentIndex(1)
         input_mode_combo.currentIndexChanged.connect(self.input_switch)
         line.addWidget(input_mode_combo)
         layout.addItem(line)
@@ -310,7 +312,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         layout2.setAlignment(QtCore.Qt.AlignTop)
         line = QtWidgets.QHBoxLayout()
         line.addWidget(QtWidgets.QLabel('開啟影片: '))
-        input_video_edit = QtWidgets.QLineEdit()
+        input_video_edit = QtWidgets.QLineEdit('./data/video1.mp4')
         open_video = input_video_edit.addAction(
             qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
         )
@@ -555,23 +557,47 @@ class TrackingUI(QtWidgets.QMainWindow):
         
         keys = [e for e in history.keys()]
 
+        # 更新表格
         for i in range(self.history_table.rowCount()):
-            tid = keys[i]
-            stime = history[tid]['stime']
-            etime = history[tid]['etime']
+            # id
+            tid = keys[i] #int
+            table_tid = self.history_table.item(i, 0)
+            table_tid = table_tid.text() if table_tid != None else ''
+            if str(tid) != table_tid:
+                self.history_table.setItem(i, 0, QtWidgets.QTableWidgetItem(str(tid)))
+            
+            # 出現時間
+            stime = f"{history[tid]['stime'] :.2f}"
+            table_stime = self.history_table.item(i, 1)
+            table_stime = table_stime.text() if table_stime != None else ''
+            if stime != table_stime:
+                self.history_table.setItem(i, 1, QtWidgets.QTableWidgetItem(stime))
+            
+            # 最後出現時間
+            etime = f"{history[tid]['etime'] :.2f}"
+            table_etime = self.history_table.item(i, 2)
+            table_etime = table_etime.text() if table_etime != None else ''
+            if etime != table_etime:
+                self.history_table.setItem(i, 2, QtWidgets.QTableWidgetItem(etime))
+            
+            # 人物特徵
             feature = history[tid]['feature']
-            self.history_table.setItem(i, 0,QtWidgets.QTableWidgetItem(str(tid)))
-            self.history_table.setItem(i, 1,QtWidgets.QTableWidgetItem(f'{stime:.3f}'))
-            self.history_table.setItem(i, 2,QtWidgets.QTableWidgetItem(f'{etime:.3f}'))
-
             color_frame = cv2.cvtColor(feature, cv2.COLOR_BGR2RGB)
             h, w, ch = color_frame.shape
-            img = QtGui.QImage(color_frame.data, w, h, ch * w, QtGui.QImage.Format_RGB888)
-            scaled_img = img.scaled(128, 128, QtCore.Qt.KeepAspectRatio)
-            servantIcon = QtWidgets.QLabel("")
-            servantIcon.setPixmap(QtGui.QPixmap(scaled_img))
-            self.history_table.setCellWidget(i, 3, servantIcon)
-            
+            table_feature_size = self.history_table.item(i, 4)
+            if table_feature_size == None:
+                tw,th = (0,0)
+            else:
+                ls = table_feature_size.text().split()
+                tw,th = int(ls[0]), int(ls[1])
+            if (w, h) != (tw, th):  
+                servantIcon = QtWidgets.QLabel('')
+                img = QtGui.QImage(color_frame.data, w, h, ch * w, QtGui.QImage.Format_RGB888)
+                scaled_img = img.scaled(128, 128, QtCore.Qt.KeepAspectRatio)
+                servantIcon.setPixmap(QtGui.QPixmap(scaled_img))
+                self.history_table.setCellWidget(i, 3, servantIcon)
+                self.history_table.setItem(i, 4, QtWidgets.QTableWidgetItem(f'{w} {h}'))
+                
 # 後台執行緒，後續流程(讀檔、偵測、後置、資料儲存)
 class ExeThread(QtCore.QThread):
     update_frame = QtCore.Signal(QtGui.QImage)
@@ -610,10 +636,10 @@ class ExeThread(QtCore.QThread):
     def set_output_data(self):
         nowtimestr = time.ctime().replace(':', '-').replace(' ', '-')[4:-5]
         csvname = f'{nowtimestr}.csv'
-        output_folder = os.path.join('results', nowtimestr)
+        output_folder = os.path.join('results', nowtimestr, 'detect')
         if not os.path.isdir(output_folder):
             os.makedirs(output_folder)
-        output_csv = os.path.join('results', csvname)
+        output_csv = os.path.join('results', nowtimestr, csvname)
         self.output_folder = output_folder
         self.csvfile = open(output_csv, 'w', newline='')
         self.csvwriter = csv.writer(self.csvfile)
@@ -642,6 +668,7 @@ class ExeThread(QtCore.QThread):
         # Emit signal
         self.update_frame.emit(scaled_img)
 
+    # 回傳表格資料
     def emit_table(self, history_table):
         self.update_table.emit(history_table)
 

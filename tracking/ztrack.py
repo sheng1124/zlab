@@ -184,6 +184,7 @@ class TrackManager():
             track_results.append(result)
         return track_results
 
+    # 設定追蹤歷史
     def set_tracker_to_history(self):
         for t in self.tracker_list:
             (tid, stime, etime, feature) = t.get_table_data()
@@ -193,6 +194,7 @@ class TrackManager():
             self.tracker_history[tid]['etime'] = etime
             self.tracker_history[tid]['feature'] = feature
     
+    # 取得追蹤紀錄
     def get_tracker_history(self):
         return self.tracker_history
 
