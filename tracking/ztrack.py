@@ -12,6 +12,8 @@ class Tracker():
         self.id = id
         # 追蹤的座標
         self.coord_list = []
+        # 追蹤的關節點座標
+        self.kpts_list = []
         # 紀錄辨識結果
         self.result_list = []
         # 紀錄時間
@@ -53,6 +55,8 @@ class Tracker():
         self.time_list.append(gtime)
         self.result_list.append(result)
         conf = result[4]
+        if len(result) > 6:
+            self.kpts_list.append(result[6:])
 
         if type(self.feature) == type(None):
             self.feature = img[int(result[1]):int(result[3]) ,int(result[0]):int(result[2])].copy()

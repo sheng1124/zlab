@@ -18,31 +18,76 @@ from tracking import ztrack
 class Painter():
     def __init__(self) -> None:
         self.color_seed = (np.random.rand(4)*255).astype('uint8')
+        self.tl = 1
+    
+    def set_tl(self, img):
+        # line/font thickness
+        self.tl = round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1
 
     def plot_track(self, img, results):
-        # line/font thickness
-        tl = round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1
-
         for det_index in range(len(results)):
             rs = results[det_index]
             id, xyxy = rs[0], rs[1:5]
             color = self.color_seed * (id * self.color_seed[3] + 1) % 255
-            #color = (color[0] % 255, color[1] % 255, color[2] % 255)
             color = color[:3].tolist()
 
             # 取得定界框座標點
             c1, c2 = (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3]))
 
             # 畫物件的定界框
-            self.plot_box(img, c1, c2, color, tl)
+            self.plot_box(img, c1, c2, color, self.tl)
 
             # 畫追蹤id
-            self.plot_id(img, c1, str(id), color, tl)
+            self.plot_id(img, c1, str(id), color, self.tl)
 
+    # 標記移動軌跡 中心點是框的下邊部分約腳的位置
+    def plot_footpoint(self, img, tracker_list):
+        for tracker in tracker_list:
+            id = tracker.id
+            color = self.color_seed * (id * self.color_seed[3] + 1) % 255
+            color = color[:3].tolist()
+            if len(tracker.kpts_list) > 0:
+                steps = 3
+                lb, rb = steps * 11, steps * 12 # 左邊屁股右邊屁股在 kpts 的index
+                for kpts in tracker.kpts_list:
+                    lbx, lby, lbconf = kpts[lb], kpts[lb + 1], kpts[lb + 2]
+                    rbx, rby, rbconf = kpts[rb], kpts[rb + 1], kpts[rb + 2]
+
+                    if lbconf > 0.5 and rbconf > 0.5:
+                        cx, cy = int((lbx + rbx) / 2), int((lby + rby) / 2)
+                        cv2.circle(img, (cx, cy), 1, color, self.tl)
+
+            else:
+                for x1, y1, x2, y2 in tracker.coord_list:
+                    cx, cy = int((x1 + x2) / 2), int((y1 + 19 * y2 ) / 20)
+                    cv2.circle(img, (cx, cy), 1, color, self.tl)
+
+    # 對每個追蹤者畫關節點
+    def plot_kpts(self, img, results):
+        for det_index in range(len(results)):
+            rs = results[det_index]
             # 畫關節點
             if len(rs) > 7:
                 kpts = rs[7:]
-                self.plot_skeleton_kpts(img, kpts, 3, tl)
+                self.plot_skeleton_kpts(img, kpts, 3, self.tl)
+
+    # 顯示每個追蹤者特定關節點的歷史紀錄位置
+    def polt_kpt_track(self, img, tracker_list, kpt_list:str):
+        kpts_index = kpt_list.split(',')
+        for kpt_index in kpts_index:
+            try:
+                kpt_index = (int(kpt_index) * 3)
+                for tracker in tracker_list:
+                    id = tracker.id
+                    color = self.color_seed * (id * self.color_seed[3] + 1) % 255
+                    color = color[:3].tolist()
+                    if len(tracker.kpts_list) > 0:
+                        for kpts in tracker.kpts_list:
+                            x, y, conf = kpts[kpt_index], kpts[kpt_index + 1], kpts[kpt_index + 2]
+                            if conf > 0.5:
+                                cv2.circle(img, (int(x), int(y)), 1, color, self.tl)
+            except (ValueError, IndexError):
+                continue
 
     def plot_detection_box(self, img, results, trackclass:int):
         # line/font thickness
@@ -171,9 +216,13 @@ class TrackingUI(QtWidgets.QMainWindow):
         # 顯示視窗
         line = QtWidgets.QHBoxLayout()
         result_window = QtWidgets.QLabel(self)
-        result_window.setFixedSize(640, 480)
+        w, h = (640, 480)
+        result_window.setFixedSize(w, h)
         line.addWidget(result_window)
         layout.addItem(line)
+        frame = np.zeros((h, w, 3), dtype='uint8')
+        img = QtGui.QImage(frame.data, w, h, 3 * w, QtGui.QImage.Format_RGB888)
+        result_window.setPixmap(QtGui.QPixmap.fromImage(img))
         self.result_window = result_window
 
         # 表格視窗
@@ -210,6 +259,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         line.addWidget(QtWidgets.QLabel('選擇 AI 模型: (執行後無法更改)'))
         model_combo = QtWidgets.QComboBox()
         model_combo.addItems(['YOLOv7', 'YOLOv7 Pose'])
+        model_combo.currentIndexChanged.connect(self.show_control_switch)
         line.addWidget(model_combo)
         layout.addItem(line)
         self.model_combo = model_combo
@@ -218,7 +268,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         line = QtWidgets.QHBoxLayout()
         line.setAlignment(QtCore.Qt.AlignLeft)
         line.addWidget(QtWidgets.QLabel('開啟類神經網路權重檔: '))
-        weights_edit = QtWidgets.QLineEdit('yolov7.pt')
+        weights_edit = QtWidgets.QLineEdit()
         open_weights = weights_edit.addAction(
             qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
         )
@@ -282,7 +332,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         line.addWidget(QtWidgets.QLabel('選擇輸入影像模式: '))
         input_mode_combo = QtWidgets.QComboBox()
         input_mode_combo.addItems(['圖片集(所有圖片尺寸必須一樣)', '影片', '視訊鏡頭、usb相機、網路攝影機'])
-        input_mode_combo.setCurrentIndex(1)
+        #input_mode_combo.setCurrentIndex(1)
         input_mode_combo.currentIndexChanged.connect(self.input_switch)
         line.addWidget(input_mode_combo)
         layout.addItem(line)
@@ -312,7 +362,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         layout2.setAlignment(QtCore.Qt.AlignTop)
         line = QtWidgets.QHBoxLayout()
         line.addWidget(QtWidgets.QLabel('開啟影片: '))
-        input_video_edit = QtWidgets.QLineEdit('./data/video1.mp4')
+        input_video_edit = QtWidgets.QLineEdit() #'./data/video1.mp4'
         open_video = input_video_edit.addAction(
             qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
         )
@@ -377,26 +427,66 @@ class TrackingUI(QtWidgets.QMainWindow):
         start_detection_btn.clicked.connect(self.start_detection)
         start_detection_btn.setEnabled(True)
         line.addWidget(start_detection_btn)
-        layout.addItem(line)
         self.start_detection_btn = start_detection_btn
 
         # 暫停辨識按鈕
-        line = QtWidgets.QHBoxLayout()
         halt_detection_btn = QtWidgets.QPushButton(text='暫停辨識＆追蹤')
         halt_detection_btn.clicked.connect(self.halt_detection)
         halt_detection_btn.setEnabled(False)
         line.addWidget(halt_detection_btn)
-        layout.addItem(line)
         self.halt_detection_btn = halt_detection_btn
 
         # 停止辨識按鈕
-        line = QtWidgets.QHBoxLayout()
         stop_detection_btn = QtWidgets.QPushButton(text='停止辨識＆追蹤')
         stop_detection_btn.clicked.connect(self.stop_detection)
         stop_detection_btn.setEnabled(False)
         line.addWidget(stop_detection_btn)
         layout.addItem(line)
         self.stop_detection_btn = stop_detection_btn
+
+        # 控制顯示選項
+        control_cfg_box = QtWidgets.QGroupBox()
+        layout2 = QtWidgets.QVBoxLayout()
+        layout2.setAlignment(QtCore.Qt.AlignTop)
+        line = QtWidgets.QHBoxLayout()
+        line.addWidget(QtWidgets.QLabel('設定顯示內容: '))
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        is_show_footpoint = QtWidgets.QCheckBox('顯示追蹤軌跡')
+        is_show_footpoint.setChecked(False)
+        line.addWidget(is_show_footpoint)
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        is_show_detection = QtWidgets.QCheckBox('顯示偵測框(紅線細框)')
+        is_show_detection.setChecked(True)
+        line.addWidget(is_show_detection)
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        is_show_kpts = QtWidgets.QCheckBox('顯示關節點')
+        is_show_kpts.setChecked(True)
+        line.addWidget(is_show_kpts)
+        self._show_kpt_track_label= QtWidgets.QLabel('        顯示特定關節點的軌跡: ')
+        line.addWidget(self._show_kpt_track_label)
+        show_kpt_track_edit = QtWidgets.QLineEdit()
+        line.addWidget(show_kpt_track_edit)
+        layout2.addItem(line)
+        is_show_kpts.hide()
+        show_kpt_track_edit.hide()
+        self._show_kpt_track_label.hide()
+
+        control_cfg_box.setLayout(layout2)
+        layout.addWidget(control_cfg_box)
+        
+        self.is_show_footpoint = is_show_footpoint
+        self.is_show_detection = is_show_detection
+        self.is_show_kpts = is_show_kpts
+        self.show_kpt_track_edit = show_kpt_track_edit
 
         #佈局
         detection_ui.setLayout(layout)
@@ -437,7 +527,11 @@ class TrackingUI(QtWidgets.QMainWindow):
             'is_save_raw':is_save_raw,
             'window_size': self.result_window.size().toTuple(),
             'track_class_id':track_class_id,
-            'conf_filter':conf_filter
+            'conf_filter':conf_filter,
+            'is_show_footpoint':self.is_show_footpoint,
+            'is_show_detection':self.is_show_detection,
+            'is_show_kpts' : self.is_show_kpts,
+            'show_kpt_track_edit' : self.show_kpt_track_edit
             }
         return cfg
 
@@ -456,6 +550,18 @@ class TrackingUI(QtWidgets.QMainWindow):
             self.input_folder_box.hide()
             self.input_video_box.hide()
             self.input_camera_box.show()
+    
+    # 當選擇某個模型時切換不同的控制顯示功能
+    def show_control_switch(self):
+        model = self.model_combo.currentIndex()
+        if model in (0, ):
+            self.is_show_kpts.hide()
+            self.show_kpt_track_edit.hide()
+            self._show_kpt_track_label.hide()
+        elif model in (1, ):
+            self.is_show_kpts.show()
+            self.show_kpt_track_edit.show()
+            self._show_kpt_track_label.show()
     
     @QtCore.Slot()
     def camera_change(self):
@@ -538,8 +644,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         (w, h) = self.result_window.size().toTuple()
         frame = np.zeros((h, w, 3), dtype='uint8')
         img = QtGui.QImage(frame.data, w, h, 3 * w, QtGui.QImage.Format_RGB888)
-        scaled_img = img.scaled(w, h, QtCore.Qt.KeepAspectRatio)
-        self.result_window.setPixmap(QtGui.QPixmap.fromImage(scaled_img))
+        self.result_window.setPixmap(QtGui.QPixmap.fromImage(img))
 
     # 將追蹤後的影像顯示在UI上
     @QtCore.Slot(QtGui.QImage)
@@ -623,6 +728,10 @@ class ExeThread(QtCore.QThread):
         self.conf_filter = cfg['conf_filter']
         self.device = detect_device()
         self.control = 0
+        self.is_show_footpoint = cfg['is_show_footpoint']
+        self.is_show_detection = cfg['is_show_detection']
+        self.is_show_kpts = cfg['is_show_kpts']
+        self.show_kpt_track_edit = cfg['show_kpt_track_edit']
 
     # 設定讀取影像的資料夾
     def set_fpath(self, fpath):
@@ -704,11 +813,6 @@ class ExeThread(QtCore.QThread):
             imgsource = ImageSource(camera=self.input_camera_id)
 
         for img0, filename in imgsource:
-            if self.control == 1:
-                while self.control == 1:
-                    pass
-            elif self.control == 2: # 強制停止
-                break
             # 影像偵測
             results = detector.detect(img0)
 
@@ -718,19 +822,40 @@ class ExeThread(QtCore.QThread):
             track_results = tm.get_track_result()
 
             # 影像後製
+            def modify_image():
+                img1 = img0.copy()
+                painter.set_tl(img1)
+                painter.plot_track(img1, track_results)
 
-            painter.plot_track(img0, track_results)
+                if self.is_show_detection.isChecked():
+                    painter.plot_detection_box(img1, results, tm.track_class_id)
+                
+                if self.is_show_kpts.isChecked():
+                    painter.plot_kpts(img1, track_results)
 
-            painter.plot_detection_box(img0, results, tm.track_class_id)
+                if self.is_show_footpoint.isChecked():
+                    painter.plot_footpoint(img1, tracker_list)
+                
+                if self.show_kpt_track_edit.text():
+                    painter.polt_kpt_track(img1, tracker_list, self.show_kpt_track_edit.text())
+
+                # 回傳後製影像給主界面顯示
+                self.emit_image(img1)
+                return img1
+
+            # 若控制台按停止按鈕，就停止偵測，按暫停就停止下一張圖片輸入但不結束偵測
+            if self.control == 1:
+                while self.control == 1:
+                    modify_image()
+            elif self.control == 2: # 強制停止
+                break
+            img1 = modify_image()
 
             # 儲存後製影像
-            cv2.imwrite(os.path.join(self.output_folder, filename), img0)
+            cv2.imwrite(os.path.join(self.output_folder, filename), img1)
 
             # 將 filename 的追蹤結果寫入到 self.csvfile
             self.write_result(filename, track_results)
-
-            # 顯示後製影像
-            self.emit_image(img0)
 
             # 輸出表格資料
             self.emit_table(tm.get_tracker_history())
