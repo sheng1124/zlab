@@ -19,15 +19,37 @@ class Painter():
     def __init__(self) -> None:
         self.color_seed = (np.random.rand(4)*255).astype('uint8')
         self.tl = 1
+        self.ban_list = []
     
+    # 設定筆畫線條粗細 line/font thickness
     def set_tl(self, img):
-        # line/font thickness
         self.tl = round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1
+
+    # 設定黑名單(將忽略、不顯示、刪除某個編號的人物影像)
+    def set_ban_list(self, ban_text:str):
+        self.ban_list = []
+        for ban_id in ban_text.split(','):
+            try:
+                self.ban_list.append(int(ban_id))
+            except (ValueError):
+                continue 
+    
+    # 設定用來刪除人的底圖
+    def set_baseimage(self, baseimage_edit:QtWidgets.QLineEdit):
+        self.baseimage_edit = baseimage_edit
+        baseimage_path = baseimage_edit.text()
+        if os.path.exists(baseimage_path):
+            self.baseimage = cv2.imread(baseimage_path)
+        else:
+            self.baseimage = None
+        self.baseimage_path = baseimage_path
 
     def plot_track(self, img, results):
         for det_index in range(len(results)):
             rs = results[det_index]
             id, xyxy = rs[0], rs[1:5]
+            if id in self.ban_list:
+                continue
             color = self.color_seed * (id * self.color_seed[3] + 1) % 255
             color = color[:3].tolist()
 
@@ -44,6 +66,8 @@ class Painter():
     def plot_footpoint(self, img, tracker_list):
         for tracker in tracker_list:
             id = tracker.id
+            if id in self.ban_list:
+                continue
             color = self.color_seed * (id * self.color_seed[3] + 1) % 255
             color = color[:3].tolist()
             if len(tracker.kpts_list) > 0:
@@ -66,6 +90,8 @@ class Painter():
     def plot_kpts(self, img, results):
         for det_index in range(len(results)):
             rs = results[det_index]
+            if rs[0] in self.ban_list:
+                continue
             # 畫關節點
             if len(rs) > 7:
                 kpts = rs[7:]
@@ -79,6 +105,8 @@ class Painter():
                 kpt_index = (int(kpt_index) * 3)
                 for tracker in tracker_list:
                     id = tracker.id
+                    if id in self.ban_list:
+                        continue
                     color = self.color_seed * (id * self.color_seed[3] + 1) % 255
                     color = color[:3].tolist()
                     if len(tracker.kpts_list) > 0:
@@ -88,6 +116,75 @@ class Painter():
                                 cv2.circle(img, (int(x), int(y)), 1, color, self.tl)
             except (ValueError, IndexError):
                 continue
+
+    # 刪除特定人物的影像
+    def remove_track_image(self, img, results, mode, dw, dh):
+        for det_index, result in enumerate(results):
+            id = result[0]
+            rs = result.copy()
+            rs[1] -= dw if rs[1] - dw > 0 else rs[1]
+            rs[2] -= dh if rs[2] - dh > 0 else rs[2]
+            rs[3] = rs[3] + dw if rs[3] + dw < img.shape[1] else img.shape[1]
+            rs[4] = rs[4] + dh if rs[4] + dh < img.shape[0] else img.shape[0]
+            
+            if id not in self.ban_list:
+                continue
+
+            if mode == 1:
+                self.remove_with_blackmask(img, rs)
+            
+            elif mode == 2:
+                self.remove_with_mosaic(img, rs)
+            
+            elif mode == 3:
+                self.remove_with_baseimage(img, rs)
+            
+            elif mode == 4:
+                self.remove_with_seamless_clone(img, rs)
+
+    # 使用黑布條遮蔽人物
+    def remove_with_blackmask(self, img, result):
+        xyxy = [int(e) for e in result[1:5]]
+        img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]] = 0
+    
+    # 打馬賽克
+    def remove_with_mosaic(self, img, result):
+        xyxy = [int(e) for e in result[1:5]]
+        target = cv2.blur(img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]], (25,25))
+        img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]] = target
+
+    # 用底圖覆蓋物件
+    def remove_with_baseimage(self, img, result):
+        if self.baseimage_edit.text() != self.baseimage_path:
+            self.set_baseimage(self.baseimage_edit)
+        if self.baseimage is None:
+            return
+        xyxy = [int(e) for e in result[1:5]]
+        target = self.baseimage[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]].copy()
+        img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]] = target
+
+    # 用seamless_clone將人物去除
+    def remove_with_seamless_clone(self, img, result):
+        if self.baseimage_edit.text() != self.baseimage_path:
+            self.set_baseimage(self.baseimage_edit)
+        if self.baseimage is None:
+            return
+        (x1, y1, x2, y2) = [int(e) for e in result[1:5]]
+        
+        # 當融合的範圍碰到邊界會有殘影，所以超出範圍的直接用底圖覆蓋
+        if x1 < 5:
+            img[y1:y2, 0:5] = self.baseimage[y1:y2, 0:5].copy()
+        if y1 < 5:
+            img[0:5, x1:x2] = self.baseimage[0:5, x1:x2].copy()
+        if x2 + 5 > img.shape[1]:
+            img[y1:y2, -5:] = self.baseimage[y1:y2, -5:].copy()
+        if y2 + 5 > img.shape[0]:
+            img[-5:, x1:x2] = self.baseimage[-5:, x1:x2].copy()
+
+        target = self.baseimage[y1:y2, x1:x2].copy()
+        mask = np.ones_like(target) * 255
+
+        img[:, :] = cv2.seamlessClone(target, img, mask, ((x1+x2)//2, (y1+y2)//2), cv2.NORMAL_CLONE)
 
     def plot_detection_box(self, img, results, trackclass:int):
         # line/font thickness
@@ -259,7 +356,6 @@ class TrackingUI(QtWidgets.QMainWindow):
         line.addWidget(QtWidgets.QLabel('選擇 AI 模型: (執行後無法更改)'))
         model_combo = QtWidgets.QComboBox()
         model_combo.addItems(['YOLOv7', 'YOLOv7 Pose'])
-        model_combo.currentIndexChanged.connect(self.show_control_switch)
         line.addWidget(model_combo)
         layout.addItem(line)
         self.model_combo = model_combo
@@ -467,24 +563,106 @@ class TrackingUI(QtWidgets.QMainWindow):
         layout2.addItem(line)
 
         line = QtWidgets.QHBoxLayout()
+        line.addWidget(QtWidgets.QLabel('設定黑名單(輸入編號)'))
+        remove_someone_edit = QtWidgets.QLineEdit()
+        line.addWidget(remove_someone_edit)
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        line.addWidget(QtWidgets.QLabel('黑名單處理(刪除)方式: '))
+        remove_mode_combo = QtWidgets.QComboBox()
+        remove_mode_combo.addItems(['無', '黑布條遮蔽', '打馬賽克', '底圖覆蓋', '影像融合'])
+        line.addWidget(remove_mode_combo)
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
+        width_modify_edit_label = QtWidgets.QLabel('寬度修正: ')
+        line.addWidget(width_modify_edit_label)
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        width_modify_edit = QtWidgets.QLineEdit('0')
+        line.addWidget(width_modify_edit)
+        hight_modify_edit_label = QtWidgets.QLabel('長度修正: ')
+        line.addWidget(hight_modify_edit_label)
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        hight_modify_edit = QtWidgets.QLineEdit('0')
+        line.addWidget(hight_modify_edit)
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
+        baseimage_edit_label = QtWidgets.QLabel('開啟刪除人物用的底圖: ')
+        line.addWidget(baseimage_edit_label)
+        baseimage_edit = QtWidgets.QLineEdit() 
+        open_baseimage= baseimage_edit.addAction(
+            qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
+        )
+        def on_open_baseimage():
+            video_path = QtWidgets.QFileDialog.getOpenFileName(parent=self, dir=os.getcwd(), filter='JPG Files(*.jpg);;PNG Files(*.png);;ALL Files(*)')
+            if video_path:
+                baseimage_edit.setText(video_path[0])
+        open_baseimage.triggered.connect(on_open_baseimage)
+        line.addWidget(baseimage_edit)
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
         line.setAlignment(QtCore.Qt.AlignLeft)
         is_show_kpts = QtWidgets.QCheckBox('顯示關節點')
         is_show_kpts.setChecked(True)
         line.addWidget(is_show_kpts)
-        self._show_kpt_track_label= QtWidgets.QLabel('        顯示特定關節點的軌跡: ')
-        line.addWidget(self._show_kpt_track_label)
+        show_kpt_track_label = QtWidgets.QLabel('        顯示特定關節點的軌跡: ')
+        line.addWidget(show_kpt_track_label)
         show_kpt_track_edit = QtWidgets.QLineEdit()
         line.addWidget(show_kpt_track_edit)
         layout2.addItem(line)
-        is_show_kpts.hide()
-        show_kpt_track_edit.hide()
-        self._show_kpt_track_label.hide()
 
         control_cfg_box.setLayout(layout2)
         layout.addWidget(control_cfg_box)
+
+        # 當選擇偵測pose的模型，才顯示調整顯示關節點功能，否則隱藏選項
+        def kpts_on_show_control():
+            model = model_combo.currentIndex()
+            if model in (0, ):
+                is_show_kpts.hide()
+                show_kpt_track_edit.hide()
+                show_kpt_track_label.hide()
+            elif model in (1, ):
+                is_show_kpts.show()
+                show_kpt_track_edit.show()
+                show_kpt_track_label.show()
+        kpts_on_show_control()
+        self.model_combo.currentIndexChanged.connect(kpts_on_show_control)
         
+        def remove_cfg_on_show_control():
+            removemode = remove_mode_combo.currentIndex()
+            if removemode == 0:
+                width_modify_edit.hide()
+                width_modify_edit_label.hide()
+                hight_modify_edit.hide()
+                hight_modify_edit_label.hide()
+                baseimage_edit.hide()
+                baseimage_edit_label.hide()
+            else:
+                width_modify_edit.show()
+                width_modify_edit_label.show()
+                hight_modify_edit.show()
+                hight_modify_edit_label.show()
+
+            if removemode in (3,4):
+                baseimage_edit.show()
+                baseimage_edit_label.show()
+            else:
+                baseimage_edit.hide()
+                baseimage_edit_label.hide()
+        remove_cfg_on_show_control()
+        remove_mode_combo.currentIndexChanged.connect(remove_cfg_on_show_control)
+
         self.is_show_footpoint = is_show_footpoint
         self.is_show_detection = is_show_detection
+        self.remove_someone_edit = remove_someone_edit
+        self.remove_mode_combo = remove_mode_combo
+        self.hight_modify_edit = hight_modify_edit
+        self.width_modify_edit = width_modify_edit
+        self.baseimage_edit = baseimage_edit
         self.is_show_kpts = is_show_kpts
         self.show_kpt_track_edit = show_kpt_track_edit
 
@@ -531,7 +709,12 @@ class TrackingUI(QtWidgets.QMainWindow):
             'is_show_footpoint':self.is_show_footpoint,
             'is_show_detection':self.is_show_detection,
             'is_show_kpts' : self.is_show_kpts,
-            'show_kpt_track_edit' : self.show_kpt_track_edit
+            'show_kpt_track_edit' : self.show_kpt_track_edit,
+            'remove_someone_edit' : self.remove_someone_edit,
+            'hight_modify_edit' : self.hight_modify_edit,
+            'width_modify_edit' : self.width_modify_edit,
+            'remove_mode_combo' : self.remove_mode_combo,
+            'baseimage_edit' : self.baseimage_edit
             }
         return cfg
 
@@ -550,18 +733,6 @@ class TrackingUI(QtWidgets.QMainWindow):
             self.input_folder_box.hide()
             self.input_video_box.hide()
             self.input_camera_box.show()
-    
-    # 當選擇某個模型時切換不同的控制顯示功能
-    def show_control_switch(self):
-        model = self.model_combo.currentIndex()
-        if model in (0, ):
-            self.is_show_kpts.hide()
-            self.show_kpt_track_edit.hide()
-            self._show_kpt_track_label.hide()
-        elif model in (1, ):
-            self.is_show_kpts.show()
-            self.show_kpt_track_edit.show()
-            self._show_kpt_track_label.show()
     
     @QtCore.Slot()
     def camera_change(self):
@@ -732,7 +903,12 @@ class ExeThread(QtCore.QThread):
         self.is_show_detection = cfg['is_show_detection']
         self.is_show_kpts = cfg['is_show_kpts']
         self.show_kpt_track_edit = cfg['show_kpt_track_edit']
-
+        self.remove_someone_edit = cfg['remove_someone_edit']
+        self.remove_mode_combo = cfg['remove_mode_combo']
+        self.baseimage_edit = cfg['baseimage_edit']
+        self.hight_modify_edit = cfg['hight_modify_edit']
+        self.width_modify_edit = cfg['width_modify_edit']
+        
     # 設定讀取影像的資料夾
     def set_fpath(self, fpath):
         self.fpath = fpath
@@ -793,6 +969,7 @@ class ExeThread(QtCore.QThread):
 
         # 後製器
         painter = Painter()
+        painter.set_baseimage(self.baseimage_edit)
 
         # 追蹤者管理
         tm = ztrack.TrackManager(self.track_class_id, self.conf_filter)
@@ -825,6 +1002,15 @@ class ExeThread(QtCore.QThread):
             def modify_image():
                 img1 = img0.copy()
                 painter.set_tl(img1)
+
+                if self.remove_someone_edit.text():
+                    painter.set_ban_list(self.remove_someone_edit.text())
+                    try:
+                        dw, dh = int(self.width_modify_edit.text()), int(self.hight_modify_edit.text())
+                    except ValueError:
+                        dw, dh = 0, 0
+                    painter.remove_track_image(img1, track_results, self.remove_mode_combo.currentIndex(), dw, dh)
+
                 painter.plot_track(img1, track_results)
 
                 if self.is_show_detection.isChecked():

@@ -88,15 +88,11 @@ class YoloV7API():
         else:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes, agnostic=agnostic_nms, kpt_label=True)
         
+        # 恢復定界框正確符合原始影像的尺寸
         for i, det in enumerate(pred):
             if len(det):
                 scale_coords(img.shape[2:], det[:, :4], img0.shape, kpt_label=False)
                 scale_coords(img.shape[2:], det[:, 6:], img0.shape, kpt_label=True, step=3)
-
-
-        # 恢復定界框正確符合原始影像的尺寸
-        #pred[0][:, 0:4:2] *= xy_rate[0]
-        #pred[0][:, 1:4:2] *= xy_rate[1]
 
         # 回傳預測結果
         return pred[0]
