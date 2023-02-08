@@ -5,6 +5,8 @@ import numpy as np
 
 from tracking.hungarian_api import hungarian_algorithm
 
+from zlab_utils.results import DResults
+
 #儲存box資訊的基本單位，不參與評估，等待指派box
 class Tracker():
     def __init__(self, id) -> None:
@@ -14,6 +16,8 @@ class Tracker():
         self.coord_list = []
         # 追蹤的關節點座標
         self.kpts_list = []
+        # 追蹤的遮罩圖層
+        self.last_mask = None
         # 紀錄辨識結果
         self.result_list = []
         # 紀錄時間
@@ -34,7 +38,10 @@ class Tracker():
     
      # 取得最後紀錄的 辨識結果
     def get_last_result(self):
-        return self.result_list[-1]
+        rs = self.result_list[-1]
+        if not self.last_mask is None:
+            rs.set_mask(self.last_mask)
+        return rs
 
     # 取得最後紀錄的時間點
     def get_last_time(self):
@@ -49,20 +56,27 @@ class Tracker():
         return(id, starttime, endtime, feature)
 
     #  紀錄框,足跡,速度 方向
-    def set_box(self, gtime:float, img:np.ndarray, result:list):
+    def set_box(self, gtime:float, img:np.ndarray, result:DResults):
+        result.set_track_id(self.id)
         self.frame_count = 0
-        self.coord_list.append(result[:4])
+        self.coord_list.append(result.box)
         self.time_list.append(gtime)
-        self.result_list.append(result)
-        conf = result[4]
-        if len(result) > 6:
-            self.kpts_list.append(result[6:])
+        conf = result.conf
+        
+        # 設定關節點
+        if not result.kpts is None:
+            self.kpts_list.append(result.kpts)
+        
+        # 設定遮罩
+        if not result.mask is None:
+            self.last_mask = result.mask
+            result.mask = None
 
-        if type(self.feature) == type(None):
-            self.feature = img[int(result[1]):int(result[3]) ,int(result[0]):int(result[2])].copy()
-            self.feature_conf = conf
-        elif conf > self.feature_conf: #conf > 0.8 :#and img.shape[0] * img.shape[1] > self.feature[0] * self.feature[1]:#
-            self.feature = img[int(result[1]):int(result[3]) ,int(result[0]):int(result[2])].copy()
+        self.result_list.append(result)
+
+        int_box = [int(e) for e in result.box]
+        if self.feature is None or conf > self.feature_conf: #conf > 0.8 :#and img.shape[0] * img.shape[1] > self.feature[0] * self.feature[1]:#:
+            self.feature = img[int_box[1]:int_box[3], int_box[0]:int_box[2]].copy()
             self.feature_conf = conf
 
 class TrackManager():
@@ -183,8 +197,7 @@ class TrackManager():
     def get_track_result(self):
         track_results = []
         for t in self.tracker_list:
-            result = [t.id]
-            result.extend(t.get_last_result())
+            result = t.get_last_result()
             track_results.append(result)
         return track_results
 
@@ -214,7 +227,7 @@ class TrackManager():
             return True
     
     # 新增 tracker 
-    def new_tracker(self, gtime, img, result):
+    def new_tracker(self, gtime, img, result:DResults):
         tracker = Tracker(self.trackid)
         tracker.set_box(gtime, img, result)
         self.trackid += 1
@@ -223,17 +236,17 @@ class TrackManager():
     # 過濾不需要的物件
     def filter_results(self, results):
         new_results = []
-        for result in results:
-            conf, cls = result[4], int(result[5])
+        for rs in results:
+            conf, cls = rs.conf, rs.cls
             if conf > self.conf_filter and cls == self.track_class_id:
-                new_results.append(result.detach().numpy())
+                new_results.append(rs)
         return new_results
 
     # 計算 物件和追蹤者的 iou 矩陣
     def count_iou_mat(self, results:list, untrack_list:list):
         iou_matrix = []
         for result in results:
-            xyxy = result[0:4]
+            xyxy = result.box
             # 每個 result 對 tracker 比較
             eval_table = [] # 評估表
             for tracker in untrack_list:

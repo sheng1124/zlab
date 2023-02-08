@@ -10,8 +10,8 @@ import PySide6.QtCore as QtCore
 import PySide6.QtGui as QtGui
 import PySide6.QtMultimedia as QtMultimedia
 
-from zlab_api import detect_device
-from zlab_api import ImageSource
+from zlab_utils.detect_device import detect_device
+from zlab_utils.image_source import ImageSource
 from tracking import ztrack
 
 # 影像後處理功能
@@ -20,6 +20,7 @@ class Painter():
         self.color_seed = (np.random.rand(4)*255).astype('uint8')
         self.tl = 1
         self.ban_list = []
+        self.blackwhite_mode = 0
     
     # 設定筆畫線條粗細 line/font thickness
     def set_tl(self, img):
@@ -35,26 +36,30 @@ class Painter():
                 continue 
     
     # 設定用來刪除人的底圖
-    def set_baseimage(self, baseimage_edit:QtWidgets.QLineEdit):
+    def set_baseimage(self, baseimage_edit:QtWidgets.QLineEdit, img_shape=None):
         self.baseimage_edit = baseimage_edit
         baseimage_path = baseimage_edit.text()
         if os.path.exists(baseimage_path):
-            self.baseimage = cv2.imread(baseimage_path)
+            baseimage = cv2.imread(baseimage_path)
+            if not img_shape is None:
+                self.baseimage = cv2.resize(baseimage, img_shape, interpolation = cv2.INTER_AREA)
+            else:
+                self.baseimage = baseimage
+                
         else:
             self.baseimage = None
         self.baseimage_path = baseimage_path
 
     def plot_track(self, img, results):
-        for det_index in range(len(results)):
-            rs = results[det_index]
-            id, xyxy = rs[0], rs[1:5]
-            if id in self.ban_list:
+        for rs in results:
+            id = rs.track_id
+            if (id in self.ban_list and self.blackwhite_mode == 0) or (not id in self.ban_list and self.blackwhite_mode == 1):
                 continue
             color = self.color_seed * (id * self.color_seed[3] + 1) % 255
             color = color[:3].tolist()
 
             # 取得定界框座標點
-            c1, c2 = (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3]))
+            c1, c2 = rs.get_cv_box()
 
             # 畫物件的定界框
             self.plot_box(img, c1, c2, color, self.tl)
@@ -62,6 +67,33 @@ class Painter():
             # 畫追蹤id
             self.plot_id(img, c1, str(id), color, self.tl)
 
+    # 畫物件的分割圖層
+    def plot_segement(self, img, results):
+        alpha = 0.5
+        for rs in results:
+            if rs.mask is None:
+                continue
+            id = rs.track_id
+            if (id in self.ban_list and self.blackwhite_mode == 0) or (not id in self.ban_list and self.blackwhite_mode == 1):
+                continue
+            color = self.color_seed * (id * self.color_seed[3] + 1) % 255
+            color = color[:3].tolist()
+
+            mask = cv2.cvtColor(rs.mask, cv2.COLOR_GRAY2BGR)
+            inv_mask = cv2.bitwise_not(mask)
+            fg = cv2.bitwise_and(img, mask)
+            bg = cv2.bitwise_and(img, inv_mask)
+            
+            fg = fg.astype(np.float64) * alpha
+
+            color_mask = mask.copy().astype(np.float64) / 255
+            color_mask[:, :, 0] *= color[0] * (1 - alpha)
+            color_mask[:, :, 1] *= color[1] * (1 - alpha)
+            color_mask[:, :, 2] *= color[2] * (1 - alpha)
+
+            new_fg = (fg + color_mask).astype('uint8')
+            cv2.add(new_fg, bg, img)
+            
     # 標記移動軌跡 中心點是框的下邊部分約腳的位置
     def plot_footpoint(self, img, tracker_list):
         for tracker in tracker_list:
@@ -88,13 +120,12 @@ class Painter():
 
     # 對每個追蹤者畫關節點
     def plot_kpts(self, img, results):
-        for det_index in range(len(results)):
-            rs = results[det_index]
-            if rs[0] in self.ban_list:
+        for rs in results:
+            if rs.track_id in self.ban_list:
                 continue
             # 畫關節點
-            if len(rs) > 7:
-                kpts = rs[7:]
+            if not rs.kpts is None:
+                kpts = rs.kpts
                 self.plot_skeleton_kpts(img, kpts, 3, self.tl)
 
     # 顯示每個追蹤者特定關節點的歷史紀錄位置
@@ -118,58 +149,102 @@ class Painter():
                 continue
 
     # 刪除特定人物的影像
-    def remove_track_image(self, img, results, mode, dw, dh):
-        for det_index, result in enumerate(results):
-            id = result[0]
-            rs = result.copy()
-            rs[1] -= dw if rs[1] - dw > 0 else rs[1]
-            rs[2] -= dh if rs[2] - dh > 0 else rs[2]
-            rs[3] = rs[3] + dw if rs[3] + dw < img.shape[1] else img.shape[1]
-            rs[4] = rs[4] + dh if rs[4] + dh < img.shape[0] else img.shape[0]
+    def remove_track_image(self, img, results, mode, is_use_segement, dw, dh):
+        if self.baseimage_edit.text() != self.baseimage_path:
+            self.set_baseimage(self.baseimage_edit, (img.shape[1], img.shape[0]))
+        for rs in results:
+            id = rs.track_id
+            box = rs.box.copy()
+            box[0] -= dw if box[0] - dw > 0 else box[0]
+            box[1] -= dh if box[1] - dh > 0 else box[1]
+            box[2] = box[2] + dw if box[2] + dw < img.shape[1] else img.shape[1]
+            box[3] = box[3] + dh if box[3] + dh < img.shape[0] else img.shape[0]
             
             if id not in self.ban_list:
                 continue
+            
+            if not is_use_segement:
+                if mode == 1:
+                    self.remove_with_blackmask(img, box)
 
-            if mode == 1:
-                self.remove_with_blackmask(img, rs)
+                elif mode == 2:
+                    self.remove_with_mosaic(img, box)
+                
+                elif mode == 3:
+                    self.remove_with_baseimage(img, box)
+                
+                elif mode == 4:
+                    self.remove_with_seamless_clone(img, box)
             
-            elif mode == 2:
-                self.remove_with_mosaic(img, rs)
-            
-            elif mode == 3:
-                self.remove_with_baseimage(img, rs)
-            
-            elif mode == 4:
-                self.remove_with_seamless_clone(img, rs)
+            else:
+                if mode == 1:
+                    self.remove_with_blackmask_seg(img, rs.mask)
 
+                elif mode == 2:
+                    self.remove_with_mosaic_seg(img, box, rs.mask)
+                
+                elif mode == 3:
+                    self.remove_with_baseimage_seg(img, rs.mask)
+                
+                elif mode == 4:
+                    self.remove_with_seamless_clone(img, box)
+    
     # 使用黑布條遮蔽人物
-    def remove_with_blackmask(self, img, result):
-        xyxy = [int(e) for e in result[1:5]]
+    def remove_with_blackmask(self, img, box):
+        xyxy = [int(e) for e in box]
         img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]] = 0
     
+    # 使用分割遮罩刪除人物
+    def remove_with_blackmask_seg(self, img, mask):
+        if mask is None:
+            return
+        inv_mask = cv2.bitwise_not(mask)
+        cv2.bitwise_and(img, cv2.cvtColor(inv_mask, cv2.COLOR_GRAY2BGR), img)
+
     # 打馬賽克
-    def remove_with_mosaic(self, img, result):
-        xyxy = [int(e) for e in result[1:5]]
+    def remove_with_mosaic(self, img, box):
+        xyxy = [int(e) for e in box]
         target = cv2.blur(img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]], (25,25))
+        img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]] = target
+    
+    # 打馬賽克
+    def remove_with_mosaic_seg(self, img, box, mask):
+        if mask is None:
+            return
+        xyxy = [int(e) for e in box]
+        
+        inv_mask = cv2.cvtColor(cv2.bitwise_not(mask), cv2.COLOR_GRAY2BGR)
+        target_seg = cv2.cvtColor(mask[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]], cv2.COLOR_GRAY2BGR)
+        target_inv_seg = inv_mask[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]]
+
+        target = cv2.blur(img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]], (25,25))
+        cv2.bitwise_and(target, target_seg, target)
+        target_no_blur = cv2.bitwise_and(img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]], target_inv_seg)
+        cv2.bitwise_or(target, target_no_blur, target)
         img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]] = target
 
     # 用底圖覆蓋物件
-    def remove_with_baseimage(self, img, result):
-        if self.baseimage_edit.text() != self.baseimage_path:
-            self.set_baseimage(self.baseimage_edit)
+    def remove_with_baseimage(self, img, box):
         if self.baseimage is None:
             return
-        xyxy = [int(e) for e in result[1:5]]
+        xyxy = [int(e) for e in box]
         target = self.baseimage[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]].copy()
         img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]] = target
 
-    # 用seamless_clone將人物去除
-    def remove_with_seamless_clone(self, img, result):
-        if self.baseimage_edit.text() != self.baseimage_path:
-            self.set_baseimage(self.baseimage_edit)
+    # 用底圖覆蓋物件
+    def remove_with_baseimage_seg(self, img, mask):
         if self.baseimage is None:
             return
-        (x1, y1, x2, y2) = [int(e) for e in result[1:5]]
+        baseimage_mask = cv2.bitwise_and(self.baseimage, cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR))
+        inv_mask = cv2.cvtColor(cv2.bitwise_not(mask), cv2.COLOR_GRAY2BGR)
+        cv2.bitwise_and(img, inv_mask, img)
+        cv2.bitwise_or(img, baseimage_mask, img)
+        
+    # 用seamless_clone將人物去除
+    def remove_with_seamless_clone(self, img, box):
+        if self.baseimage is None:
+            return
+        (x1, y1, x2, y2) = [int(e) for e in box]
         
         # 當融合的範圍碰到邊界會有殘影，所以超出範圍的直接用底圖覆蓋
         if x1 < 5:
@@ -186,18 +261,143 @@ class Painter():
 
         img[:, :] = cv2.seamlessClone(target, img, mask, ((x1+x2)//2, (y1+y2)//2), cv2.NORMAL_CLONE)
 
+    # 白名單特定人物的影像
+    def white_track_image(self, img, results, mode, is_use_segement, dw, dh):
+        if self.baseimage_edit.text() != self.baseimage_path:
+            self.set_baseimage(self.baseimage_edit, (img.shape[1], img.shape[0]))
+
+        blackboard = np.zeros_like(img)
+
+        if not self.baseimage is None:
+            baseimage = self.baseimage.copy()
+        
+        if mode == 2:
+            blur_img = cv2.blur(img, (25,25))
+
+        for rs in results:
+            id = rs.track_id
+            box = rs.box.copy()
+            box[0] -= dw if box[0] - dw > 0 else box[0]
+            box[1] -= dh if box[1] - dh > 0 else box[1]
+            box[2] = box[2] + dw if box[2] + dw < img.shape[1] else img.shape[1]
+            box[3] = box[3] + dh if box[3] + dh < img.shape[0] else img.shape[0]
+            
+            if id not in self.ban_list:
+                continue
+            
+            if not is_use_segement:
+                if mode == 1:
+                    self.white_with_blackmask(img, blackboard, box)
+
+                elif mode == 2:
+                    self.white_with_blackmask(img, blur_img, box)
+                    blackboard = blur_img
+                
+                elif mode == 3 and not self.baseimage is None:
+                    self.white_with_blackmask(img, baseimage, box)
+                    blackboard = baseimage
+                
+                elif mode == 4 and not self.baseimage is None:
+                    self.white_with_seamless_clone(img, baseimage, box)
+                    blackboard = baseimage
+            
+            else:
+                if mode == 1:
+                    self.white_with_segementmask(img, blackboard, rs.mask)
+
+                elif mode == 2:
+                    self.white_with_segement_baseimage(img, blur_img, rs.mask)
+                    blackboard = blur_img
+                
+                elif mode == 3 and not self.baseimage is None:
+                    self.white_with_segement_baseimage(img, baseimage, rs.mask)
+                    blackboard = baseimage
+                
+                elif mode == 4:
+                    self.white_with_segement_seamless_clone(img, baseimage, box, rs.mask)
+                    blackboard = baseimage
+
+        img[:] = blackboard[:]
+
+    # 只顯示白名單上面的人
+    def white_with_blackmask(self, img, blackboard, box):
+        xyxy = [int(e) for e in box]
+        blackboard[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]] = img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]]
+    
+    # 只顯示白名單上面的人 使用分割遮罩
+    def white_with_segementmask(self, img, blackboard, mask):
+        if mask is None:
+            return
+        seg = cv2.bitwise_and(img, cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR))
+        cv2.bitwise_or(blackboard, seg, blackboard)
+
+    # 替換背景
+    def white_with_segement_baseimage(self, img, baseimage, mask):
+        if mask is None:
+            return
+        inv_mask = cv2.bitwise_not(mask)
+        seg = cv2.bitwise_and(img, cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR))
+        baseimage_seg = cv2.bitwise_and(baseimage, cv2.cvtColor(inv_mask, cv2.COLOR_GRAY2BGR))
+        cv2.bitwise_or(baseimage_seg, seg, baseimage)
+
+    # 白名單的人融合到新背景
+    def white_with_seamless_clone(self, img, background, box):
+        if background is None:
+            return
+        (x1, y1, x2, y2) = [int(e) for e in box]
+        
+        # 當融合的範圍碰到邊界會有殘影，所以超出範圍的直接用底圖覆蓋
+        if x1 < 5:
+            x1 = 5
+        if y1 < 5:
+            y1 = 5
+        if x2 + 5 > img.shape[1]:
+            x2 = img.shape[1] - 5
+        if y2 + 5 > img.shape[0]:
+            y2 = img.shape[0] -5
+
+        target = img[y1:y2, x1:x2].copy()
+        mask = np.ones_like(target) * 255
+
+        background[:, :] = cv2.seamlessClone(target, background, mask, ((x1+x2)//2, (y1+y2)//2), cv2.NORMAL_CLONE)
+    
+    # 白名單的人融合到新背景 用分割摳圖出來
+    def white_with_segement_seamless_clone(self, img, background, box, segmask):
+        if background is None:
+            return
+        (x1, y1, x2, y2) = [int(e) for e in box]
+        
+        # 當融合的範圍碰到邊界會有殘影，所以超出範圍的直接用底圖覆蓋
+        if x1 < 5:
+            x1 = 5
+        if y1 < 5:
+            y1 = 5
+        if x2 + 5 > img.shape[1]:
+            x2 = img.shape[1] - 5
+        if y2 + 5 > img.shape[0]:
+            y2 = img.shape[0] -5
+
+        # 先將box融合到背景
+        target = img[y1:y2, x1:x2].copy()
+        mask = np.ones_like(target) * 255
+        nbg = background.copy()
+        blend_img = cv2.seamlessClone(target, nbg, mask, ((x1+x2)//2, (y1+y2)//2), cv2.NORMAL_CLONE)
+
+        # 融合後的影像用 分割遮罩摳出來 在和背景去掉分割遮罩的部分合成
+        inv_segmask= cv2.bitwise_not(segmask)
+        blend_img_seg = cv2.bitwise_and(blend_img, cv2.cvtColor(segmask, cv2.COLOR_GRAY2BGR))
+        background_seg = cv2.bitwise_and(background, cv2.cvtColor(inv_segmask, cv2.COLOR_GRAY2BGR))
+        cv2.bitwise_or(blend_img_seg, background_seg, background)
+
     def plot_detection_box(self, img, results, trackclass:int):
         # line/font thickness
         tl = round(0.0002 * (img.shape[0] + img.shape[1]) / 2) + 1  
         color = (0,0,255)
 
         # 從辨識結果取出物件並影像後製
-        for det_index, (*xyxy, conf, cls) in enumerate(reversed(results[:,:6])):
-            if int(cls) != trackclass:
-                continue
-
-            # 取得定界框座標點
-            c1, c2 = (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3]))
+        for rs in results:
+            c1, c2 = rs.get_cv_box()
+            conf, cls = rs.conf, rs.cls
 
             # 畫物件的定界框
             self.plot_box(img, c1, c2, color, tl)
@@ -355,7 +555,8 @@ class TrackingUI(QtWidgets.QMainWindow):
         line.setAlignment(QtCore.Qt.AlignLeft)
         line.addWidget(QtWidgets.QLabel('選擇 AI 模型: (執行後無法更改)'))
         model_combo = QtWidgets.QComboBox()
-        model_combo.addItems(['YOLOv7', 'YOLOv7 Pose'])
+        model_combo.addItems(['YOLOv7', 'YOLOv7 Pose', 'YOLOv8 segement'])
+        #model_combo.setCurrentIndex(1)
         line.addWidget(model_combo)
         layout.addItem(line)
         self.model_combo = model_combo
@@ -364,7 +565,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         line = QtWidgets.QHBoxLayout()
         line.setAlignment(QtCore.Qt.AlignLeft)
         line.addWidget(QtWidgets.QLabel('開啟類神經網路權重檔: '))
-        weights_edit = QtWidgets.QLineEdit()
+        weights_edit = QtWidgets.QLineEdit()#'/Users/shengfu/Desktop/project/zlab/yolov7-w6-pose.pt')#'/Users/shengfu/Desktop/project/zlab/yolov8l-seg.pt')
         open_weights = weights_edit.addAction(
             qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
         )
@@ -440,7 +641,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         layout2.setAlignment(QtCore.Qt.AlignTop)
         line = QtWidgets.QHBoxLayout()
         line.addWidget(QtWidgets.QLabel('選擇要偵測的資料夾: '))
-        input_folder_edit = QtWidgets.QLineEdit()
+        input_folder_edit = QtWidgets.QLineEdit('/Users/shengfu/Desktop/project/zlab/data/record/12-02-21-11')
         input_folder = input_folder_edit.addAction(
             qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
         )
@@ -550,30 +751,53 @@ class TrackingUI(QtWidgets.QMainWindow):
 
         line = QtWidgets.QHBoxLayout()
         line.setAlignment(QtCore.Qt.AlignLeft)
-        is_show_footpoint = QtWidgets.QCheckBox('顯示追蹤軌跡')
+        is_show_tracker = QtWidgets.QCheckBox('標註物件編號框        ')
+        is_show_tracker.setChecked(True)
+        line.addWidget(is_show_tracker)
+
+        is_show_footpoint = QtWidgets.QCheckBox('標註追蹤軌跡        ')
         is_show_footpoint.setChecked(False)
         line.addWidget(is_show_footpoint)
         layout2.addItem(line)
 
-        line = QtWidgets.QHBoxLayout()
-        line.setAlignment(QtCore.Qt.AlignLeft)
-        is_show_detection = QtWidgets.QCheckBox('顯示偵測框(紅線細框)')
-        is_show_detection.setChecked(True)
+        is_show_detection = QtWidgets.QCheckBox('標註偵測到的物件(紅線)')
+        is_show_detection.setChecked(False)
         line.addWidget(is_show_detection)
         layout2.addItem(line)
 
         line = QtWidgets.QHBoxLayout()
-        line.addWidget(QtWidgets.QLabel('設定黑名單(輸入編號)'))
-        remove_someone_edit = QtWidgets.QLineEdit()
-        line.addWidget(remove_someone_edit)
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        is_show_segement = QtWidgets.QCheckBox('顯示分割        ')
+        is_show_segement.setChecked(True)
+        line.addWidget(is_show_segement)
         layout2.addItem(line)
 
         line = QtWidgets.QHBoxLayout()
         line.setAlignment(QtCore.Qt.AlignLeft)
-        line.addWidget(QtWidgets.QLabel('黑名單處理(刪除)方式: '))
+        blackwhite_mode_combo = QtWidgets.QComboBox()
+        blackwhite_mode_combo.addItems(['黑名單模式', '白名單模式'])
+        line.addWidget(blackwhite_mode_combo)
+        line.addWidget(QtWidgets.QLabel('輸入編號'))
+        someone_edit = QtWidgets.QLineEdit()
+        line.addWidget(someone_edit)
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        black_way =  QtWidgets.QLabel('黑名單處理(刪除)方式: ')
+        line.addWidget(black_way)
         remove_mode_combo = QtWidgets.QComboBox()
         remove_mode_combo.addItems(['無', '黑布條遮蔽', '打馬賽克', '底圖覆蓋', '影像融合'])
         line.addWidget(remove_mode_combo)
+        layout2.addItem(line)
+
+        line = QtWidgets.QHBoxLayout()
+        line.setAlignment(QtCore.Qt.AlignLeft)
+        white_way = QtWidgets.QLabel('白名單處理方式: ')
+        line.addWidget(white_way)
+        white_mode_combo = QtWidgets.QComboBox()
+        white_mode_combo.addItems(['無', '刪除背景', '背景馬賽克', '換背景', '影像融合'])
+        line.addWidget(white_mode_combo)
         layout2.addItem(line)
 
         line = QtWidgets.QHBoxLayout()
@@ -590,7 +814,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         layout2.addItem(line)
 
         line = QtWidgets.QHBoxLayout()
-        baseimage_edit_label = QtWidgets.QLabel('開啟刪除人物用的底圖: ')
+        baseimage_edit_label = QtWidgets.QLabel('開啟底圖或新背景: ')
         line.addWidget(baseimage_edit_label)
         baseimage_edit = QtWidgets.QLineEdit() 
         open_baseimage= baseimage_edit.addAction(
@@ -615,26 +839,47 @@ class TrackingUI(QtWidgets.QMainWindow):
         line.addWidget(show_kpt_track_edit)
         layout2.addItem(line)
 
+        line = QtWidgets.QHBoxLayout()
+        line.setAlignment(QtCore.Qt.AlignLeft)
+
+        is_use_segement_mask = QtWidgets.QCheckBox('使用分割遮罩')
+        is_use_segement_mask.setChecked(True)
+        line.addWidget(is_use_segement_mask)
+        layout2.addItem(line)
+
         control_cfg_box.setLayout(layout2)
         layout.addWidget(control_cfg_box)
 
-        # 當選擇偵測pose的模型，才顯示調整顯示關節點功能，否則隱藏選項
-        def kpts_on_show_control():
+        # 顯示 控制每個模型可以設定的選項 ex: 當選擇偵測pose的模型，才顯示調整顯示關節點功能，否則隱藏選項
+        def model_on_show_control():
             model = model_combo.currentIndex()
-            if model in (0, ):
-                is_show_kpts.hide()
-                show_kpt_track_edit.hide()
-                show_kpt_track_label.hide()
-            elif model in (1, ):
+            if model in (1, ):
                 is_show_kpts.show()
                 show_kpt_track_edit.show()
                 show_kpt_track_label.show()
-        kpts_on_show_control()
-        self.model_combo.currentIndexChanged.connect(kpts_on_show_control)
+                is_show_segement.hide()
+                is_use_segement_mask.hide()
+            elif model in (2, ):
+                is_show_kpts.hide()
+                show_kpt_track_edit.hide()
+                show_kpt_track_label.hide()
+                is_show_segement.show()
+                is_use_segement_mask.show()
+            else:
+                is_show_kpts.hide()
+                show_kpt_track_edit.hide()
+                show_kpt_track_label.hide()
+                is_show_segement.hide()
+                is_use_segement_mask.hide()
+        model_on_show_control()
+        self.model_combo.currentIndexChanged.connect(model_on_show_control)
         
         def remove_cfg_on_show_control():
+            bw = blackwhite_mode_combo.currentIndex()
             removemode = remove_mode_combo.currentIndex()
-            if removemode == 0:
+            whitemode = white_mode_combo.currentIndex()
+
+            if (bw == 0 and removemode == 0) or (bw == 1 and whitemode == 0):
                 width_modify_edit.hide()
                 width_modify_edit_label.hide()
                 hight_modify_edit.hide()
@@ -647,7 +892,7 @@ class TrackingUI(QtWidgets.QMainWindow):
                 hight_modify_edit.show()
                 hight_modify_edit_label.show()
 
-            if removemode in (3,4):
+            if (bw == 0 and removemode in (3,4)) or (bw == 1 and whitemode in (3,4)):
                 baseimage_edit.show()
                 baseimage_edit_label.show()
             else:
@@ -655,17 +900,39 @@ class TrackingUI(QtWidgets.QMainWindow):
                 baseimage_edit_label.hide()
         remove_cfg_on_show_control()
         remove_mode_combo.currentIndexChanged.connect(remove_cfg_on_show_control)
+        white_mode_combo.currentIndexChanged.connect(remove_cfg_on_show_control)
+
+        def black_white_mode_show_control():
+            remove_cfg_on_show_control()
+            bw = blackwhite_mode_combo.currentIndex()
+            if bw == 0:
+                remove_mode_combo.show()
+                black_way.show()
+                white_mode_combo.hide()
+                white_way.hide()
+            else:
+                remove_mode_combo.hide()
+                black_way.hide()
+                white_mode_combo.show()
+                white_way.show()
+        black_white_mode_show_control()
+        blackwhite_mode_combo.currentIndexChanged.connect(black_white_mode_show_control)
 
         self.is_show_footpoint = is_show_footpoint
         self.is_show_detection = is_show_detection
-        self.remove_someone_edit = remove_someone_edit
+        self.someone_edit = someone_edit
         self.remove_mode_combo = remove_mode_combo
         self.hight_modify_edit = hight_modify_edit
         self.width_modify_edit = width_modify_edit
         self.baseimage_edit = baseimage_edit
         self.is_show_kpts = is_show_kpts
         self.show_kpt_track_edit = show_kpt_track_edit
-
+        self.is_show_segement = is_show_segement
+        self.is_show_tracker = is_show_tracker
+        self.is_use_segement_mask = is_use_segement_mask
+        self.blackwhite_mode_combo = blackwhite_mode_combo
+        self.white_mode_combo = white_mode_combo
+        
         #佈局
         detection_ui.setLayout(layout)
         return detection_ui
@@ -709,12 +976,17 @@ class TrackingUI(QtWidgets.QMainWindow):
             'is_show_footpoint':self.is_show_footpoint,
             'is_show_detection':self.is_show_detection,
             'is_show_kpts' : self.is_show_kpts,
+            'is_show_segement' : self.is_show_segement,
+            'is_use_segement_mask' : self.is_use_segement_mask,
+            'is_show_tracker': self.is_show_tracker,
             'show_kpt_track_edit' : self.show_kpt_track_edit,
-            'remove_someone_edit' : self.remove_someone_edit,
+            'someone_edit' : self.someone_edit,
             'hight_modify_edit' : self.hight_modify_edit,
             'width_modify_edit' : self.width_modify_edit,
             'remove_mode_combo' : self.remove_mode_combo,
-            'baseimage_edit' : self.baseimage_edit
+            'baseimage_edit' : self.baseimage_edit,
+            'blackwhite_mode_combo' : self.blackwhite_mode_combo,
+            'white_mode_combo' : self.white_mode_combo
             }
         return cfg
 
@@ -807,6 +1079,10 @@ class TrackingUI(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def end_detection(self):
+        self.width_modify_edit.setText('0')
+        self.hight_modify_edit.setText('0')
+        self.baseimage_edit.setText('')
+
         self.start_detection_btn.setEnabled(True)
         self.halt_detection_btn.setEnabled(False)
         self.stop_detection_btn.setEnabled(False)
@@ -901,13 +1177,19 @@ class ExeThread(QtCore.QThread):
         self.control = 0
         self.is_show_footpoint = cfg['is_show_footpoint']
         self.is_show_detection = cfg['is_show_detection']
+        self.is_show_tracker = cfg['is_show_tracker']
         self.is_show_kpts = cfg['is_show_kpts']
+        self.is_show_segement = cfg['is_show_segement']
+        self.is_use_segement_mask = cfg['is_use_segement_mask']
         self.show_kpt_track_edit = cfg['show_kpt_track_edit']
-        self.remove_someone_edit = cfg['remove_someone_edit']
+        self.someone_edit = cfg['someone_edit']
         self.remove_mode_combo = cfg['remove_mode_combo']
         self.baseimage_edit = cfg['baseimage_edit']
         self.hight_modify_edit = cfg['hight_modify_edit']
         self.width_modify_edit = cfg['width_modify_edit']
+        self.blackwhite_mode_combo = cfg['blackwhite_mode_combo']
+        self.white_mode_combo = cfg['white_mode_combo']
+
         
     # 設定讀取影像的資料夾
     def set_fpath(self, fpath):
@@ -931,12 +1213,12 @@ class ExeThread(QtCore.QThread):
 
     # 寫入辨識結果到 csv 檔
     def write_result(self, filename, results):
-        for i in range(len(results)):
-            tid, xyxy, conf, cls = results[i][0] ,results[i][1:5], results[i][5], results[i][6]
-            line = [filename, int(cls), tid, *xyxy, conf]
-            if len(results[i]) > 7:
+        for rs in results:
+            tid, xyxy, conf, cls = rs.track_id, rs.box, rs.conf, rs.cls
+            line = [filename, cls, tid, *xyxy, conf]
+            if not rs.kpts is None:
                 # 取得關節點座標清單
-                kpts = results[i][7:]
+                kpts = rs.kpts
                 kpts_str = ','.join(['%.2f']*len(kpts))
                 kpts_str = f'"{kpts_str % tuple(kpts)}"'
                 line.append(kpts_str)
@@ -966,6 +1248,9 @@ class ExeThread(QtCore.QThread):
         elif self.model_id == 1:
             from detection.yolov7pose import YoloV7API
             detector = YoloV7API(self.weights, self.device)
+        elif self.model_id == 2:
+            from detection.yolov8segement import YoloV8SegementAPI
+            detector = YoloV8SegementAPI(self.weights)
 
         # 後製器
         painter = Painter()
@@ -1003,19 +1288,31 @@ class ExeThread(QtCore.QThread):
                 img1 = img0.copy()
                 painter.set_tl(img1)
 
-                if self.remove_someone_edit.text():
-                    painter.set_ban_list(self.remove_someone_edit.text())
+                if self.someone_edit.text():
+                    painter.set_ban_list(self.someone_edit.text())
                     try:
                         dw, dh = int(self.width_modify_edit.text()), int(self.hight_modify_edit.text())
                     except ValueError:
                         dw, dh = 0, 0
-                    painter.remove_track_image(img1, track_results, self.remove_mode_combo.currentIndex(), dw, dh)
-
-                painter.plot_track(img1, track_results)
+                    isusesegement = self.is_use_segement_mask.isChecked() if self.model_id in (2, ) else False
+                    bw = self.blackwhite_mode_combo.currentIndex()
+                    painter.blackwhite_mode = bw
+                    if bw == 0:
+                        mode = self.remove_mode_combo.currentIndex()
+                        painter.remove_track_image(img1, track_results, mode, isusesegement, dw, dh)
+                    else:
+                        mode = self.white_mode_combo.currentIndex()
+                        painter.white_track_image(img1, track_results, mode, isusesegement, dw, dh)
+                
+                if self.is_show_tracker.isChecked():
+                    painter.plot_track(img1, track_results)
 
                 if self.is_show_detection.isChecked():
                     painter.plot_detection_box(img1, results, tm.track_class_id)
                 
+                if self.is_show_segement.isChecked():
+                    painter.plot_segement(img1, track_results)
+
                 if self.is_show_kpts.isChecked():
                     painter.plot_kpts(img1, track_results)
 

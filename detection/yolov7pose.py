@@ -10,6 +10,8 @@ from models.experimental import attempt_load
 from utils.general import non_max_suppression, scale_coords
 from utils.datasets import letterbox
 
+from zlab_utils.results import DResults
+
 def clip_coords(boxes, img_shape, step=2):
     # Clip bounding xyxy bounding boxes to image shape (height, width)
     boxes[:, 0::step].clamp_(0, img_shape[1])  # x1
@@ -93,7 +95,18 @@ class YoloV7API():
             if len(det):
                 scale_coords(img.shape[2:], det[:, :4], img0.shape, kpt_label=False)
                 scale_coords(img.shape[2:], det[:, 6:], img0.shape, kpt_label=True, step=3)
+        pred = pred[0].detach().numpy()
+        
+        # 設定結果
+        results = []
+        for p in pred:
+            rs = DResults()
+            rs.set_box(p[:4])
+            rs.set_conf(p[4])
+            rs.set_cls(int(p[5]))
+            rs.set_kpts(p[6:])
+            results.append(rs)
 
         # 回傳預測結果
-        return pred[0]
+        return results
 

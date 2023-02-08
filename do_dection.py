@@ -113,9 +113,12 @@ class Painter():
 
             # 取得定界框座標點
             c1, c2 = (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3]))
-
+            kpts = []
             # 取得關節點座標清單
-            kpts = results[det_index, 6:]
+            if len(results[det_index]) > 7:
+                kpts = results[det_index, 6:]
+            elif len(results[det_index]) > 6:
+                mask = results[det_index, 6]
 
             # 畫物件的定界框
             self.plot_box(img, c1, c2, color, tl)
@@ -218,7 +221,7 @@ class DetectionUI(QtWidgets.QMainWindow):
         line.setAlignment(QtCore.Qt.AlignLeft)
         line.addWidget(QtWidgets.QLabel('選擇 AI 模型: (執行後無法更改)'))
         model_combo = QtWidgets.QComboBox()
-        model_combo.addItems(['YOLOv7', 'YOLOv7 Pose'])
+        model_combo.addItems(['YOLOv7', 'YOLOv7 Pose', 'Yolact'])
         line.addWidget(model_combo)
         layout.addItem(line)
         self.model_combo = model_combo
@@ -419,7 +422,7 @@ class DetectionUI(QtWidgets.QMainWindow):
             parent=self,
             caption='Select a pt file',
             dir=os.getcwd(),
-            filter='(*.pt)')
+            filter='PT Files(*.pt);;PTH Files(*.pth);;ALL Files(*)')
         if video_path:
             self.weights_edit.setText(video_path[0])
     
@@ -520,17 +523,23 @@ class ExeThread(QtCore.QThread):
 
     # 寫入辨識結果到 csv 檔
     def write_result(self, filename, results):
-        for det_index, (*xyxy, conf, cls) in enumerate(reversed(results[:,:6])):
-            # 取得關節點座標清單
-            kpts = results[det_index, 6:].detach().numpy()
-            kpts_str = ','.join(['%.2f']*len(kpts))
-            kpts_str = f'"{kpts_str % tuple(kpts)}"'
+        try:
+            results = results.detach().numpy()
+        except AttributeError:
+            pass
 
-            xyxy = [xyxy[0].detach().numpy(), xyxy[1].detach().numpy(), xyxy[2].detach().numpy(), xyxy[3].detach().numpy()]
-            if len(kpts):
-                line = [filename, cls.detach().numpy(), *xyxy, conf.detach().numpy(), kpts_str]
+        for det_index, (*xyxy, conf, cls) in enumerate(reversed(results[:,:6])):
+            if len(results) > 7:
+                # 取得關節點座標清單
+                kpts = results[det_index, 6:]
+                kpts_str = ','.join(['%.2f']*len(kpts))
+                kpts_str = f'"{kpts_str % tuple(kpts)}"'
+                
+            xyxy = [xyxy[0], xyxy[1], xyxy[2], xyxy[3]]
+            if len(results) > 7:
+                line = [filename, cls, *xyxy, conf, kpts_str]
             else:
-                line = [filename, cls.detach().numpy(), *xyxy, conf.detach().numpy(), '']
+                line = [filename, cls, *xyxy, conf, '']
             self.csvwriter.writerow(line)
 
     # 回傳影像給主視窗顯示
@@ -551,6 +560,9 @@ class ExeThread(QtCore.QThread):
         elif self.model_id == 1:
             from detection.yolov7pose import YoloV7API
             detector = YoloV7API(self.weights, self.device)
+        elif self.model_id == 2:
+            from segmentation.yolactapi import YolactAPI
+            detector = YolactAPI(self.weights, self.device)
 
         # 後製器
         painter = Painter()
