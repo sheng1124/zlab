@@ -150,6 +150,7 @@ class Painter():
 
     # 刪除特定人物的影像
     def remove_track_image(self, img, results, mode, is_use_segement, dw, dh):
+        backup_img = img.copy()
         if self.baseimage_edit.text() != self.baseimage_path:
             self.set_baseimage(self.baseimage_edit, (img.shape[1], img.shape[0]))
         for rs in results:
@@ -188,6 +189,15 @@ class Painter():
                 
                 elif mode == 4:
                     self.remove_with_seamless_clone(img, box)
+        
+        # 消除某人時，若有重疊到別人需要將別人復原
+        if is_use_segement and mode == 4 and len(self.ban_list) >0 :
+            for rs in results:
+                id = rs.track_id
+                if id in self.ban_list:
+                    continue
+                self.repair_dele_seg(img, backup_img, rs.mask)
+                
     
     # 使用黑布條遮蔽人物
     def remove_with_blackmask(self, img, box):
@@ -260,6 +270,16 @@ class Painter():
         mask = np.ones_like(target) * 255
 
         img[:, :] = cv2.seamlessClone(target, img, mask, ((x1+x2)//2, (y1+y2)//2), cv2.NORMAL_CLONE)
+
+    # 復原被刪除的分割影像
+    def repair_dele_seg(self, img, backup_img, mask):
+        if mask is None:
+            return
+        rawseg = cv2.bitwise_and(backup_img, cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR))
+        inv_mask = cv2.cvtColor(cv2.bitwise_not(mask), cv2.COLOR_GRAY2BGR)
+        cv2.bitwise_and(img, inv_mask, img)
+        cv2.bitwise_or(img, rawseg, img)
+        
 
     # 白名單特定人物的影像
     def white_track_image(self, img, results, mode, is_use_segement, dw, dh):
