@@ -9,6 +9,7 @@
     * 將人物從影像上刪除、打馬賽克、遮蔽、隱藏
       ![](https://github.com/sheng1124/zlab/blob/main/demo/g0.gif)
     * 將人物合成到虛擬背景上、去除多餘背景、虛化背景
+      ![](https://github.com/sheng1124/zlab/blob/main/demo/j0.gif)
 
    
 
