@@ -22,6 +22,8 @@ class ImageSource():
             for filename in fp_list:
                 if filename[-4:].lower() in ('.jpg', '.png'):
                     fp_list2.append(filename)
+                if filename[-5:].lower() in ('.jpeg'):
+                    fp_list2.append(filename)
 
             # 整理檔名 
             try:
