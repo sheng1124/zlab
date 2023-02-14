@@ -28,6 +28,8 @@ class YoloV8SegementAPI():
         rs = self.model(img0)[0]
 
         boxes = rs.boxes
+        if rs.masks is None:
+            return []
         masks = rs.masks.data
         pred = []
         for i, box in enumerate(boxes):
