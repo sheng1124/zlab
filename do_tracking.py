@@ -1299,7 +1299,7 @@ class ExeThread(QtCore.QThread):
             results = detector.detect(img0)
 
             # 物件追蹤
-            tracker_list = tm.tracking(float(filename[:-4]), img0, results)
+            tracker_list = tm.tracking(float(os.path.splitext(filename)[0]), img0, results)
 
             track_results = tm.get_track_result()
 
