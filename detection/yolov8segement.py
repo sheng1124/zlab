@@ -32,8 +32,8 @@ class YoloV8SegementAPI():
         pred = []
         for i, box in enumerate(boxes):
             # [x1, y1, x2, y2, conf, cls, mask]
-            box = box.data[0].detach().numpy()
-            mask = (masks[i] *255).byte().detach().numpy()
+            box = box.data[0].cpu().detach().numpy()
+            mask = (masks[i] *255).cpu().byte().detach().numpy()
 
             # 座標、尺寸轉換
             img1_shape = (mask.shape[0], mask.shape[1])

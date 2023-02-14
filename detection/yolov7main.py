@@ -80,7 +80,11 @@ class YoloV7API():
         for i, det in enumerate(pred):
             if len(det):
                 scale_coords(img.shape[2:], det[:, :4], img0.shape)
-        pred = pred[0].detach().numpy()
+        
+        if self.half:
+            pred = pred[0].cpu().detach().numpy()
+        else:
+            pred = pred[0].detach().numpy()
         
         # 設定結果
         results = []
