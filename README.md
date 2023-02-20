@@ -21,13 +21,13 @@
     * MacOS、Windows 10 11、Ubuntu 20.04 
 * 環境安裝
     * 安裝 python 3.9
-        * 參考安裝
+        * [參考安裝](https://medium.com/datainpoint/python-essentials-conda-quickstart-1f1e9ecd1025)
     * nvidia GPU 需要安裝 cuda、cuDNN
         * cuda >= 10.2、11.3、11.6
-        * 參考安裝
+        * [參考安裝](https://zhuanlan.zhihu.com/p/106133822)
     * 安裝合適的 pytorch 版本(>1.12.1)，
         * cuda 版本需要參考官網安裝
-    * 使用 pip 安裝 requirement.txt 的套件
+    * 使用 pip 安裝 zlab/requirement.txt 的套件
 
 ## 系統介面
 * MacOS
@@ -76,36 +76,188 @@
         * 標註偵測到的物件(紅線)：顯示當下模型辨識出來的物件位置，以紅色的細框來標注，通常用來測試模型是否有辨識到物件
         ![](https://i.imgur.com/GPE7M6C.png)
 
+    * 關節點：
+        * 顯示關節點：將追蹤後的人物的關節點標註在影像上
+        * 顯示特定關節點軌跡：顯示人物特定編號關節點出現到目前位置的移動軌跡，可輸入多個編號，使用","分隔編號 ex: 1,2,4
+        ![](https://i.imgur.com/wxTfBYe.png)
+    
+    * 分割：
+        * 顯示分割：將追蹤後的人物的分割影像標注在影像上，可以明確了解分割模型偵測的範圍在影像上哪個地方。
+        
 
 * 黑/白名單功能
     * 黑名單模式是針對某些特定編號的物件進行影像後製，例如：在影片上對編號 1 的物件打馬賽克。
     * 白名單模式是對特定編號以外的範圍進行影像後製，例如：除了編號 1 的影像都打馬賽克。
     * 不同的模型會有額外的功能可以選擇，例如： yolo segement 可以選擇使用分割影像處理特定部位
+    * 影像後製的方式有影像塗黑、打馬賽克、影像替換、影像融合，黑白名單模式都會有不同的效果，可以用不同的後製方法來做到一些特殊功能。
+    * 可以輸入多個編號 ex: 1,2,4
+    * 在某些後製功能中可以調整物件的範圍，長寬度修正是指將後製的範圍，例如：寬度修正10可以讓打馬賽克的範圍變寬 10 像素點
+    ![](https://i.imgur.com/sNkKn8t.png)
+    ![](https://i.imgur.com/qOIZFoF.png)
 
-    
 
 ## 使用說明、範例
 * 標註行人的位置、編號
-    * 設定顯示內容： ☑ 標註物件編號框
+    * 設定顯示內容： 勾選標註物件編號框
     ![](https://i.imgur.com/ARpiHxn.png)
     ![](https://i.imgur.com/wYS9kNP.png)
 
+
+
 * 標註行人移動的軌跡
-    * 設定顯示內容： ☑ 標註追蹤軌跡
+    * 設定顯示內容： 勾選標註追蹤軌跡
     ![](https://i.imgur.com/8T7TMj9.png)
     ![](https://i.imgur.com/bxkZ3Lr.png)
 
 
 
 * 標註行人的關節點
-    * 
+    * 選擇 AI 模型 YOLOv7 Pose
+    * 設定顯示內容： 勾選顯示關節點
+    ![](https://i.imgur.com/AIjDW52.png)
+    ![](https://i.imgur.com/XDmEH9w.png)
+
+
 
 * 標註行人關節點的移動軌跡
+    * 選擇 AI 模型 YOLOv7 Pose
+    * 設定顯示內容： 顯示特定關節點的軌跡，輸入要觀察的關節點軌跡，逗號分割
+    ![](https://i.imgur.com/xH3Yx8N.png)
+    ![](https://i.imgur.com/9tkYXGO.png)
+
+
+
 * 標註行人的輪廓、分割影像
+    * 選擇 AI 模型 YOLOv8 segement
+    * 設定顯示內容： 勾選顯示分割
+    ![](https://i.imgur.com/XAMiBUp.png)
+    ![](https://i.imgur.com/6qsXYTA.png)
+
+
 
 * 刪除特定人物影像
-* 特定人物打馬賽克
-* 替換特定人物影像
-* 特定人物隱形
+    1. 選擇黑名單模式，輸入要刪除人物的編號
+    2. 黑名單處理方式：黑布條遮蔽
+    3. 長寬修正：輸入要調整邊界框大小的範圍
+    ![](https://i.imgur.com/9vKEQzb.png)
+    ![](https://i.imgur.com/U9lKlFp.jpg)
+    1. 選擇 AI 模型 YOLOv8 segement
+    2. 勾選使用分割遮罩
+    3. 選擇黑名單模式，輸入要刪除人物的編號
+    4. 黑名單處理方式：黑布條遮蔽
+    ![](https://i.imgur.com/5et3D1X.png)
+    ![](https://i.imgur.com/ZKzuF6J.jpg)
+    
+    
 
-* 
+* 刪除特定人物背景
+    1. 選擇 AI 模型 YOLOv8 segement
+    2. 勾選使用分割遮罩
+    3. 選擇黑名單模式，輸入要刪除人物的編號
+    4. 黑名單模式: 刪除背景
+    ![](https://i.imgur.com/lZSmlcr.png)
+    ![](https://i.imgur.com/SEK33px.png)
+
+
+
+* 特定人物打馬賽克
+    1. 選擇黑名單模式，輸入要刪除人物的編號
+    2. 黑名單處理方式：打馬賽克
+    3. 長寬修正：輸入要調整邊界框大小的範圍
+      ![](https://i.imgur.com/0bPo3cM.png)
+      ![](https://i.imgur.com/x8u0cO4.jpg)
+    1. 選擇 AI 模型 YOLOv8 segement
+    2. 黑名單處理方式：打馬賽克
+    3. 勾選使用分割遮罩
+    4. 選擇黑名單模式，輸入要刪除人物的編號
+      ![](https://i.imgur.com/x8a0Iiw.png)
+      ![](https://i.imgur.com/L9C4obB.jpg)
+  
+
+
+* 特定人物背景虛化
+    1. 選擇 AI 模型 YOLOv8 segement
+    2. 勾選使用分割遮罩
+    3. 選擇白名單模式，輸入要保留人物的編號
+    4. 白名單處理方式：背景馬賽克
+      ![](https://i.imgur.com/qZMY0Zq.png)
+      ![](https://i.imgur.com/fkboGBI.png)
+
+
+
+* 替換特定人物影像
+    1. 選擇黑名單模式，輸入要刪除人物的編號
+    2. 黑名單處理方式：底圖覆蓋
+    3. 長寬修正：輸入要調整邊界框大小的範圍
+    4. 開啟底圖的圖片位置
+    ![](https://i.imgur.com/LJesjIP.png)
+    ![](https://i.imgur.com/PmILZD5.jpg)
+
+
+
+* 特定人物影像替換背景
+    1. 選擇 AI 模型 YOLOv8 segement
+    2. 勾選使用分割遮罩
+    3. 選擇白名單模式，輸入要保留人物的編號
+    4. 白名單處理方式：換背景
+    5. 開啟底圖的圖片位置
+    ![](https://i.imgur.com/IOlHald.png)
+    ![](https://i.imgur.com/5pLnXBh.jpg)
+
+
+
+* 特定人物隱形
+    1. 選擇黑名單模式，輸入要刪除人物的編號
+    2. 黑名單處理方式：底圖覆蓋
+    3. 長寬修正：輸入要調整邊界框大小的範圍
+    4. 開啟底圖的圖片位置
+    ![](https://i.imgur.com/SKWxY9a.png)
+    ![](https://i.imgur.com/Fa97UGC.jpg)
+
+
+
+* 特定人物影像融合進新背景
+    1. 選擇 AI 模型 YOLOv8 segement
+    2. 勾選使用分割遮罩
+    3. 選擇白名單模式，輸入要保留人物的編號
+    4. 白名單處理方式：影像融合
+    5. 開啟底圖的圖片位置
+    ![](https://i.imgur.com/3Ml0Gtp.png)
+    ![](https://i.imgur.com/pOXTMyy.jpg)
+
+
+# 資料儲存
+* 當系統追蹤完時，會在 zlab 資料夾中的 results 建立以目前時間點的資料夾(ex: Feb--9-14-45-37)格式為 月--日-時-分-秒
+* 在這些資料夾中會生成 detect 資料夾和一個csv檔
+* detect 資料夾中會生成所有系統追蹤後製的圖片，會以秒的單位建立檔名
+    ![](https://i.imgur.com/Sg7zeFD.png)
+* 可以利用在 video_tool 資料夾裡的 vt.py 將 detect 資料夾的圖片轉成影片
+* csv 格式的資料紀錄所有追蹤的結果
+    * filename: 對應的後製圖片檔名，可到 detect 資料夾中查看
+    * classname: 物件類別對應的id
+    * id: 追蹤的id
+    * x0, y0, x1, y1: 物件的偵測框的座標
+    * conf： 判斷物件是否正確偵測到的程度
+    * kpts: 關節點座標，若使用 yolo pose 模組會有這個資料
+    ![](https://i.imgur.com/gsEH40G.png)
+
+
+# 資料下載
+* 類神經網路權重檔(pretrain model)
+    * yolov7
+        * [v7](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7.pt)
+    * yolo-pose
+        * [w6](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-w6-pose.pt)
+    * yolo-segment
+        * [v8l](https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8l-seg.pt)
+        * [v8x(參數較大，精確度高，速度慢)](https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8x-seg.pt)
+    * 備註：若要使用自己的模型要確認是否是 yolov7 v8 可讀取的模型架構，詳細請看參考資料
+* 影像資料
+    * 不提供影像資料，請自行錄影成 mp4 的格式
+    * 若要自行錄影可以使用 video_tool 裡的 vt.py 程式可以選擇存成影像或影片
+
+# 參考資料
+* Yolo v7
+    * [github](https://github.com/WongKinYiu/yolov7)
+* Yolo v8
+    * [github](https://github.com/ultralytics/ultralytics)
