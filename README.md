@@ -31,6 +31,7 @@
         ![](https://i.imgur.com/OXkY8zs.png)
 
     3. 使用 pip 安裝 zlab/requirement.txt 的套件
+        * 快捷指令```pip install -r requirements.txt```
 
 ## 系統介面
 * MacOS
