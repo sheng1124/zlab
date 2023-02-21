@@ -20,14 +20,17 @@
 * 作業系統
     * MacOS、Windows 10 11、Ubuntu 20.04 
 * 環境安裝
-    * 安裝 python 3.9
+    1. 安裝 python 3.9
         * [參考安裝](https://medium.com/datainpoint/python-essentials-conda-quickstart-1f1e9ecd1025)
     * nvidia GPU 需要安裝 cuda、cuDNN
-        * cuda >= 10.2、11.3、11.6
+        * cuda >= 11.3、11.6
         * [參考安裝](https://zhuanlan.zhihu.com/p/106133822)
-    * 安裝合適的 pytorch 版本(>1.12.1)，
+    2. 安裝合適的 pytorch 版本(>1.12.1)，
         * cuda 版本需要參考官網安裝
-    * 使用 pip 安裝 zlab/requirement.txt 的套件
+        * 如圖所示，若cuda版本為11.7必須加上```--extra-index-url https://download.pytorch.org/whl/cu117```
+        ![](https://i.imgur.com/OXkY8zs.png)
+
+    3. 使用 pip 安裝 zlab/requirement.txt 的套件
 
 ## 系統介面
 * MacOS
