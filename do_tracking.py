@@ -661,7 +661,7 @@ class TrackingUI(QtWidgets.QMainWindow):
         layout2.setAlignment(QtCore.Qt.AlignTop)
         line = QtWidgets.QHBoxLayout()
         line.addWidget(QtWidgets.QLabel('選擇要偵測的資料夾: '))
-        input_folder_edit = QtWidgets.QLineEdit('/Users/shengfu/Desktop/project/zlab/data/record/12-02-21-11')
+        input_folder_edit = QtWidgets.QLineEdit('')
         input_folder = input_folder_edit.addAction(
             qApp.style().standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), QtWidgets.QLineEdit.TrailingPosition
         )
